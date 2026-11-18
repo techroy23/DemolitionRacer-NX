@@ -526,6 +526,10 @@ uint32 sub_80013A9C(void)
     R32(0x800651A4u) = value;
     while (!result)
     {
+#if defined(AP_SWITCH)
+        extern void switch_record_race_profile(uint64 update_us, uint64 scene_us, uint64 wait_us);
+        uint64 profile_start = xport_timer_get();
+#endif
         if (R32(0x800651D0u) || R32(0x800651ACu))
             R32(0x80064A40u) = 1u;
         race_empty42C44();
@@ -586,6 +590,9 @@ uint32 sub_80013A9C(void)
         sub_800399D4();
         sub_80039908();
         race_call0(0x80042754u);
+#if defined(AP_SWITCH)
+        uint64 profile_scene_start = xport_timer_get();
+#endif
         race_call2(0x80090040u, 0u, 0u);
         if (R32(0x800593A0u))
         {
@@ -652,11 +659,18 @@ uint32 sub_80013A9C(void)
         race_call1(0x8003D9ACu, 0u);
         race_call0(0x800B3810u);
         race_call1(0x8003D9ACu, 0u);
+#if defined(AP_SWITCH)
+        uint64 profile_wait_start = xport_timer_get();
+#endif
         do
         {
             value = race_call1(0x80047044u, ~0u);
         } while ((sint32)(value - R32(0x80065198u)) < 2);
         R32(0x80065198u) = race_call1(0x80047044u, ~0u);
+#if defined(AP_SWITCH)
+        switch_record_race_profile(profile_scene_start - profile_start, profile_wait_start - profile_scene_start,
+                                   xport_timer_get() - profile_wait_start);
+#endif
         sub_800200E0();
         sub_80039934();
         sub_80039A10();

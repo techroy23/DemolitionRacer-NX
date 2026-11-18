@@ -10,6 +10,7 @@ typedef struct {
 } FramebufferSource;
 
 typedef FramebufferSource FramebufferViewport;
+int32_t framebuffer_integer_scale(int32_t output_width, int32_t input_width);
 FramebufferViewport framebuffer_viewport(int32_t width, int32_t height, unsigned upscale);
 void framebuffer_draw_fps(uint32_t *destination, size_t stride, int32_t width, int32_t height, unsigned fps);
 bool framebuffer_blit_scaled(uint32_t *destination, size_t stride, int32_t width, int32_t height,

@@ -2,7 +2,7 @@
 
 A native homebrew port of `SLUS-00969`, the US PlayStation release, for the first-generation Switch OLED. The project builds the reconstructed game as AArch64 code and reads original artwork, tracks, and audio from a local asset pack. No emulator frontend or retail BIOS is used. See [PLAN.MD](PLAN.MD) for parity milestones and what has been verified.
 
-**Status: 0.1.3 is ready for testing.** The 0.1.2 hardware log shows movie, menu, race, and results assets loading with no framebuffer submission failures. The new controls, save migration, and display settings still need OLED verification. Use single-player mode; original menus and artwork are unchanged.
+**Status: 0.1.4 is ready for testing.** The 0.1.3 hardware run confirmed clean exit and no submission failures. The race still stuttered. This build adds timing breakdowns and a faster 3× output path without changing the original race timing.
 
 ## Prepare your game data
 
@@ -17,7 +17,7 @@ The tool checks the exact supported disc SHA-256 and makes `pack/DATA/` without 
 
 ## Build
 
-Install the Switch development packages following [devkitPro's Windows setup](https://devkitpro.org/wiki/Getting_Started). The build needs devkitA64, libnx, and Switch packaging tools. Invoke `make` from the devkitPro MSYS shell with its normal SDK environment. Run from the project root:
+Install the Switch development packages following [devkitPro's Windows setup](https://devkitpro.org/wiki/Getting_Started). The build needs devkitA64, libnx, Switch packaging tools, and Python with Pillow (`python -m pip install Pillow`). The two `game_*.png` files are launcher artwork; the NRO embeds a square Homebrew Menu icon and shows the splash for about five seconds before the original intro. The original movies and game assets remain on the SD card. Invoke `make` from the devkitPro MSYS shell with its normal SDK environment. Run from the project root:
 
 ```sh
 git submodule update --init -- .deps/xport
@@ -57,7 +57,7 @@ UPSCALE: FIT
 - On launch the NRO creates `SAVE/`. It moves an existing `DemolitionRacer.sav` there if no save or recovery backup exists there already. Existing saves in `SAVE/` take priority.
 - Each launch creates a separate `DemolitionRacer_YYYY-MM-DD_HH-MM-SS.log` next to the NRO, using the console's local time. `DEBUG` adds elapsed timestamps, frame submission timings, audio counters, file opens, and save events. `INFO` keeps major events and errors; `ERROR` keeps errors only. Missing or invalid settings use `INFO`, overlay off, and `FIT`.
 
-If something goes wrong, send the log for that launch and tell us the last screen you saw and what you pressed. The log captures application diagnostics, not a system crash dump.
+If something goes wrong, send the log for that launch and tell us the last screen you saw and what you pressed. For race stutter, run the same race and send the `Race profile` and `Present profile` lines with `LOG: DEBUG`. Race timings include the original two-field wait and can include calls that also submit to the framebuffer; the phase and presentation timings must not be added together. The FPS overlay counts framebuffer submissions, not distinct race iterations. The log is not a system crash dump.
 
 ## Source provenance
 

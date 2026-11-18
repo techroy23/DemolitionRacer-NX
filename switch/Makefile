@@ -24,7 +24,8 @@ XPORT ?= ../.deps/xport
 RUNTIME := $(XPORT)/src
 BUILD := build
 NAME := DemolitionRacer
-VERSION := 0.1.3
+VERSION := 0.1.4
+PYTHON ?= python
 BINARY := $(BUILD)/$(NAME)
 BUILD_MAKEFILE := $(firstword $(MAKEFILE_LIST))
 
@@ -59,7 +60,7 @@ RUNTIME_SOURCES := psx.c psx_gpu.c psx_font.c psx_spu.c psx_seq.c psx_xa.c \
  psx_mdec.c psx_press.c psx_vlc.c psx_stream.c xport_fmv.c xport_trace.c
 GAME_OBJS := $(GAME_SOURCES:%.c=$(BUILD)/game/%.o)
 RUNTIME_OBJS := $(RUNTIME_SOURCES:%.c=$(BUILD)/xport/%.o)
-OBJS := $(GAME_OBJS) $(RUNTIME_OBJS) $(BUILD)/platform.o $(BUILD)/diagnostics.o $(BUILD)/framebuffer_blit.o
+OBJS := $(GAME_OBJS) $(RUNTIME_OBJS) $(BUILD)/platform.o $(BUILD)/diagnostics.o $(BUILD)/framebuffer_blit.o $(BUILD)/splash.o
 
 ARCH := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 DEFINES := -D__SWITCH__ -DAP_SWITCH -DXPORT_NATIVE -DFIELD_RATE=60 \
@@ -91,6 +92,12 @@ $(BUILD)/%.o: %.c $(BUILD_MAKEFILE)
 	@mkdir -p "$(@D)"
 	$(COMPILE.c) "$<" -o "$@"
 
+$(BUILD)/game_icon.jpg $(BUILD)/game_splash.bgra &: ../game_icon.png ../game_splash.png ../tools/prepare_switch_art.py
+	$(PYTHON) ../tools/prepare_switch_art.py ../game_icon.png ../game_splash.png "$(BUILD)"
+
+$(BUILD)/splash.o: splash.S $(BUILD)/game_splash.bgra
+	"$(CC)" $(ARCH) -pipe -c "$<" -o "$@"
+
 # Windows GCC/collect2 need a writable native temp path even for an object-only link.
 # Use the build tree so this works independently of the SDK shell's /tmp mount.
 ifneq ($(filter MSYS% MINGW% CYGWIN%,$(shell uname -s)),)
@@ -107,8 +114,8 @@ $(BINARY).nacp: $(BUILD_MAKEFILE)
 	@mkdir -p "$(@D)"
 	"$(TOOLBIN)/nacptool" --create "Demolition Racer" "Demolition Racer xport contributors" "$(VERSION)" "$@"
 
-$(BINARY).nro: $(BINARY).elf $(BINARY).nacp
-	"$(TOOLBIN)/elf2nro" "$<" "$@" --nacp="$(BINARY).nacp"
+$(BINARY).nro: $(BINARY).elf $(BINARY).nacp $(BUILD)/game_icon.jpg
+	"$(TOOLBIN)/elf2nro" "$<" "$@" --nacp="$(BINARY).nacp" --icon="$(BUILD)/game_icon.jpg"
 
 clean:
 	rm -rf -- "$(BUILD)"

@@ -115,6 +115,32 @@ static void start_diagnostics(void)
         switch_log(DIAGNOSTICS_ERROR, "Could not read settings.yaml (errno=%d); using INFO", settings_error);
 }
 
+void switch_record_race_profile(uint64 update_us, uint64 scene_us, uint64 wait_us)
+{
+    if (diagnostic_threshold != DIAGNOSTICS_DEBUG || !diagnostic_log)
+        return;
+    static uint64 update_total, scene_total, wait_total, peak, window_start;
+    static unsigned frames;
+    uint64 now = xport_timer_get();
+    if (!frames)
+        window_start = now - (update_us + scene_us + wait_us);
+    update_total += update_us;
+    scene_total += scene_us;
+    wait_total += wait_us;
+    uint64 measured_us = update_us + scene_us + wait_us;
+    if (measured_us > peak)
+        peak = measured_us;
+    ++frames;
+    if (now - window_start >= 2000000)
+    {
+        switch_log(DIAGNOSTICS_DEBUG, "Race profile iterations=%u window-us=%llu update-avg-us=%llu scene-avg-us=%llu pacing-avg-us=%llu measured-peak-us=%llu",
+                   frames, (unsigned long long)(now - window_start), (unsigned long long)(update_total / frames),
+                   (unsigned long long)(scene_total / frames), (unsigned long long)(wait_total / frames), (unsigned long long)peak);
+        frames = 0;
+        update_total = scene_total = wait_total = peak = 0;
+    }
+}
+
 static void close_diagnostics(void)
 {
     if (diagnostic_log)
@@ -434,10 +460,13 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
         return 0;
     }
     static uint64 window_start, frame_start_count, max_submit_us, last_submit_us;
+    static uint64 dequeue_total, scale_total, queue_total;
+    static unsigned profiled_submissions;
     static unsigned submission_fps;
     uint64 submit_start_us = xport_timer_get();
     u32 stride_bytes = 0;
     uint32_t *destination = framebufferBegin(&switch_framebuffer, &stride_bytes);
+    uint64 dequeue_done = xport_timer_get();
     uint32_t visible_colors = 0;
     const FramebufferSource crop = {source_x, source_y, source_width, source_height};
     bool copied = stride_bytes % sizeof(*destination) == 0 &&
@@ -447,6 +476,7 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
     if (copied && game_settings.fps_overlay)
         framebuffer_draw_fps(destination, stride_bytes / sizeof(*destination),
                              display_width, display_height, submission_fps);
+    uint64 scale_done = xport_timer_get();
     if (destination)
         framebufferEnd(&switch_framebuffer);
     if (!copied)
@@ -465,6 +495,18 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
     bool nonblack = visible_colors != 0;
     ++presented_frames;
     uint64 submitted_us = xport_timer_get();
+    dequeue_total += dequeue_done - submit_start_us;
+    scale_total += scale_done - dequeue_done;
+    queue_total += submitted_us - scale_done;
+    ++profiled_submissions;
+    if (profiled_submissions == 120)
+    {
+        switch_log(DIAGNOSTICS_DEBUG, "Present profile frames=%u dequeue-avg-us=%llu scale-avg-us=%llu queue-avg-us=%llu",
+                   profiled_submissions, (unsigned long long)(dequeue_total / profiled_submissions),
+                   (unsigned long long)(scale_total / profiled_submissions), (unsigned long long)(queue_total / profiled_submissions));
+        profiled_submissions = 0;
+        dequeue_total = scale_total = queue_total = 0;
+    }
     last_submit_us = submitted_us - submit_start_us;
     if (last_submit_us > max_submit_us)
         max_submit_us = last_submit_us;
@@ -875,6 +917,36 @@ void xport_shutdown(void)
     shutting_down = false;
 }
 
+static void show_startup_splash(void)
+{
+    extern const uint32_t dracer_splash_pixels[640 * 480];
+    if (!xport_window_init())
+        return;
+    u32 stride_bytes = 0;
+    uint32_t *destination = framebufferBegin(&switch_framebuffer, &stride_bytes);
+    if (!destination)
+    {
+        switch_log(DIAGNOSTICS_ERROR, "Could not dequeue the launcher splash framebuffer");
+        return;
+    }
+    bool copied = stride_bytes % sizeof(*destination) == 0 &&
+                  framebuffer_blit_4_3(destination, stride_bytes / sizeof(*destination), display_width, display_height,
+                                       dracer_splash_pixels, 640, 480, (FramebufferSource){0, 0, 640, 480}, NULL);
+    framebufferEnd(&switch_framebuffer);
+    if (!copied)
+    {
+        switch_log(DIAGNOSTICS_ERROR, "Could not copy launcher splash pixels (stride=%u)", (unsigned)stride_bytes);
+        return;
+    }
+    switch_log(DIAGNOSTICS_INFO, "Launcher splash submitted for 5000 ms");
+    const uint64 splash_deadline = xport_timer_get() + 5000000;
+    while (xport_timer_get() < splash_deadline)
+    {
+        pump_applet();
+        svcSleepThread(10000000);
+    }
+}
+
 int main(void)
 {
     start_diagnostics();
@@ -898,6 +970,7 @@ int main(void)
     {
         game_running = true;
         pump_applet();
+        show_startup_splash();
         switch_log(DIAGNOSTICS_INFO, "Entering reconstructed PS1 game code");
         xport_main();
     }

@@ -35,5 +35,14 @@ int main(void)
     for (unsigned i = 0; i < 120 * 40; ++i)
         white_pixels += overlay[i] == 0xffffffff;
     assert(white_pixels > 0);
+    uint32_t tripled[12 * 9] = {0};
+    const uint32_t pattern[4 * 3] = {1,2,3,4, 5,6,7,8, 9,10,11,12};
+    assert(framebuffer_blit_scaled(tripled, 12, 12, 9, pattern, 4, 3,
+                                   (FramebufferSource){0, 0, 4, 3}, 0, &visible_colors));
+    assert(framebuffer_integer_scale(12, 4) == 3 && framebuffer_integer_scale(13, 4) == 0);
+    assert(visible_colors == 15);
+    for (unsigned y = 0; y < 9; ++y)
+        for (unsigned x = 0; x < 12; ++x)
+            assert(tripled[y * 12 + x] == (0xff000000u | pattern[(y / 3) * 4 + x / 3]));
     return 0;
 }

@@ -1,6 +1,11 @@
 #include "framebuffer_blit.h"
 #include <string.h>
 
+int32_t framebuffer_integer_scale(int32_t output_width, int32_t input_width)
+{
+    return input_width > 0 && output_width > 0 && output_width % input_width == 0 ? output_width / input_width : 0;
+}
+
 FramebufferViewport framebuffer_viewport(int32_t width, int32_t height, unsigned upscale)
 {
     if (width < 4 || height < 3)
@@ -27,6 +32,7 @@ bool framebuffer_blit_scaled(uint32_t *destination, size_t stride, int32_t width
     FramebufferViewport viewport = framebuffer_viewport(width, height, upscale);
     int32_t active_width = viewport.width, active_height = viewport.height;
     int32_t left = viewport.x, top = viewport.y;
+    int32_t integer_scale = framebuffer_integer_scale(active_width, crop.width);
     const uint32_t opaque_black = 0xff000000u;
     uint32_t colors = 0;
     int32_t source_y = 0, vertical_remainder = 0, previous_source_y = -1;
@@ -46,21 +52,36 @@ bool framebuffer_blit_scaled(uint32_t *destination, size_t stride, int32_t width
             const uint32_t *source_row = source + (size_t)(crop.y + source_y) * source_width + crop.x;
             for (int32_t x = 0; x < left; ++x)
                 row[x] = opaque_black;
-            uint64_t horizontal_remainder = 0;
-            int32_t source_x = 0;
-            const int32_t step_x = crop.width / active_width;
-            const int32_t remainder_x = crop.width % active_width;
-            for (int32_t x = 0; x < active_width; ++x)
+            if (integer_scale == 3)
             {
-                uint32_t pixel = source_row[source_x];
-                colors |= pixel;
-                row[left + x] = pixel | opaque_black;  // Already BGRA in little-endian memory.
-                source_x += step_x;
-                horizontal_remainder += remainder_x;
-                if (horizontal_remainder >= (uint32_t)active_width)
+                uint32_t *output = row + left;
+                for (int32_t x = 0; x < crop.width; ++x)
                 {
-                    horizontal_remainder -= active_width;
-                    ++source_x;
+                    uint32_t pixel = source_row[x];
+                    colors |= pixel;
+                    pixel |= opaque_black;
+                    output[0] = output[1] = output[2] = pixel;
+                    output += 3;
+                }
+            }
+            else
+            {
+                uint64_t horizontal_remainder = 0;
+                int32_t source_x = 0;
+                const int32_t step_x = crop.width / active_width;
+                const int32_t remainder_x = crop.width % active_width;
+                for (int32_t x = 0; x < active_width; ++x)
+                {
+                    uint32_t pixel = source_row[source_x];
+                    colors |= pixel;
+                    row[left + x] = pixel | opaque_black;  // Already BGRA in little-endian memory.
+                    source_x += step_x;
+                    horizontal_remainder += remainder_x;
+                    if (horizontal_remainder >= (uint32_t)active_width)
+                    {
+                        horizontal_remainder -= active_width;
+                        ++source_x;
+                    }
                 }
             }
             for (int32_t x = left + active_width; x < width; ++x)
