@@ -6,7 +6,7 @@ This is an unofficial homebrew port of the US PlayStation game for the first-gen
 
 ## 1. Make the `DATA` folder
 
-If you don't already have the project files, open the [v0.1.5 release page](https://github.com/techroy23/DemolitionRacer-NX/releases/tag/v0.1.5), download **Source code (zip)** under **Assets**, and extract it. The ZIP includes the Python script and `settings.yaml`. You don't need to build anything.
+If you don't already have the project files, open the [latest release page](https://github.com/techroy23/DemolitionRacer-NX/releases/latest), download **Source code (zip)** under **Assets**, and extract it. The ZIP includes the Python script and `settings.yaml`. You don't need to build anything.
 
 Install [Python 3.11 or newer](https://www.python.org/downloads/). You don't need any extra Python packages or Switch build tools for this step.
 
@@ -28,7 +28,7 @@ The script makes `dist/switch/DemolitionRacer/DATA/`. It won't change your disc 
 
 ## 2. Download the Switch app
 
-[Download `DemolitionRacer.nro`](https://github.com/techroy23/DemolitionRacer-NX/releases/download/v0.1.5/DemolitionRacer.nro). This is the file you open on your Switch. It won't run without the `DATA` folder you made in step 1 from your own disc dump.
+[Download `DemolitionRacer.nro`](https://github.com/techroy23/DemolitionRacer-NX/releases/latest/download/DemolitionRacer.nro). This is the file you open on your Switch. It won't run without the `DATA` folder you made in step 1 from your own disc dump.
 
 Prefer to compile the app yourself? See the [build guide](technical.md#build-the-switch-app).
 
