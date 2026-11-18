@@ -24,9 +24,13 @@ python tools/prepare_assets.py
 
 The script makes `dist/switch/DemolitionRacer/DATA/`. It won't change your disc files or overwrite an existing `DATA` folder. If it says the disc is unsupported, check that you have the unmodified US release; renaming a different release won't make it work.
 
-## 2. Copy it to your Switch
+## 2. Get the Switch app
 
-You need a Switch that can already launch the Homebrew Menu and a copy of `DemolitionRacer.nro`, the port's Switch app. If you need to build the app, see the [build instructions](technical.md#build-the-switch-app).
+Download [DemolitionRacer.nro from the v0.1.5 release](https://github.com/techroy23/DemolitionRacer-NX/releases/tag/v0.1.5), or [build it yourself](technical.md#build-the-switch-app). The download is just the port. You still need to run step 1 with your own disc dump. If you only downloaded the NRO, also download and extract the release's **Source code (zip)** to get the Python script and `settings.yaml`.
+
+## 3. Copy it to your Switch
+
+Your Switch must already be able to open the Homebrew Menu.
 
 1. Put `DemolitionRacer.nro` and a copy of [settings.yaml](switch/settings.yaml) beside the generated `DATA` folder in `dist/switch/DemolitionRacer/`. Keep your existing settings if you're updating.
 2. Copy `dist/switch/DemolitionRacer/` into `switch/` on your SD card. The app should land at `switch/DemolitionRacer/DemolitionRacer.nro`, with `DATA/` right beside it.
