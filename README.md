@@ -4,6 +4,14 @@ A native homebrew port of `SLUS-00969`, the US PlayStation release, for the firs
 
 **Status: 0.1.5 is ready for testing.** It tries three display buffers to reduce time spent waiting for one to become available, falling back to two if allocation fails. It also adds collision response timing and missed-submission-gap counters. Original race timing, collision logic, and game artwork are unchanged.
 
+## Repository layout
+
+- `src/`: game C sources and the Switch, Windows, and web platform files under `src/platform/`.
+- `third_party/xport/`: pinned Git submodule containing the shared PS1 compatibility runtime. It provides services that the native game code calls; it is not an emulator executable. Keep the submodule initialized to build.
+- `switch/`: Switch Makefile, default settings, and generated `build/` output.
+- `tools/` and `tests/`: asset preparation, packaging, and host tests.
+- `DATA/`, `DISC/`, `pack/`, and `dist/`: local game data and distribution files, kept out of Git.
+
 ## Prepare your game data
 
 Use your own unmodified US single-track `MODE2/2352` BIN. Python 3.11 or newer is required. Run these from the repository root in PowerShell or Git Bash:
@@ -20,7 +28,7 @@ The tool checks the exact supported disc SHA-256 and makes `pack/DATA/` without 
 Install the Switch development packages following [devkitPro's Windows setup](https://devkitpro.org/wiki/Getting_Started). The build needs devkitA64, libnx, Switch packaging tools, and Python with Pillow (`python -m pip install Pillow`). The two `game_*.png` files are launcher artwork; the NRO embeds a square Homebrew Menu icon and shows the splash for about five seconds before the original intro. The splash fills the available width, with top and bottom bars so no artwork is cropped or stretched. The original movies and game assets remain on the SD card. Invoke `make` from the devkitPro MSYS shell with its normal SDK environment. Run from the project root:
 
 ```sh
-git submodule update --init -- .deps/xport
+git submodule update --init -- third_party/xport
 make -C switch
 ```
 

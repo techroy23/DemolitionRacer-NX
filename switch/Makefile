@@ -19,8 +19,9 @@ CC := $(DEVKITA64)/bin/aarch64-none-elf-gcc
 # Use the SDK's C++ link driver for the final NRO ELF.
 CXX := $(DEVKITA64)/bin/aarch64-none-elf-g++
 
-GAME := ../pseudocode/src
-XPORT ?= ../.deps/xport
+GAME := ../src
+SWITCH_PLATFORM := $(GAME)/platform/switch
+XPORT ?= ../third_party/xport
 RUNTIME := $(XPORT)/src
 BUILD := build
 NAME := DemolitionRacer
@@ -29,7 +30,7 @@ PYTHON ?= python
 BINARY := $(BUILD)/$(NAME)
 BUILD_MAKEFILE := $(firstword $(MAKEFILE_LIST))
 
-# Keep in the same order as APP_SOURCES in pseudocode/src/platform/web/Makefile.
+# Keep in the same order as APP_SOURCES in src/platform/web/Makefile.
 GAME_SOURCES := \
  game_main.c game_data.c game_link_stubs.c draft_agent1.c draft_agent1_extra.c draft_agent2.c draft_agent3.c \
  game_bootstrap.c game_missing.c game_pres_init.c game_pres_main.c game_pres_support.c game_pres_menu.c \
@@ -88,14 +89,14 @@ $(BUILD)/xport/%.o: $(RUNTIME)/%.c $(BUILD_MAKEFILE)
 	@mkdir -p "$(@D)"
 	$(COMPILE.c) "$<" -o "$@"
 
-$(BUILD)/%.o: %.c $(BUILD_MAKEFILE)
+$(BUILD)/%.o: $(SWITCH_PLATFORM)/%.c $(BUILD_MAKEFILE)
 	@mkdir -p "$(@D)"
 	$(COMPILE.c) "$<" -o "$@"
 
 $(BUILD)/game_icon.jpg $(BUILD)/game_splash.bgra &: ../game_icon.png ../game_splash.png ../tools/prepare_switch_art.py
 	$(PYTHON) ../tools/prepare_switch_art.py ../game_icon.png ../game_splash.png "$(BUILD)"
 
-$(BUILD)/splash.o: splash.S $(BUILD)/game_splash.bgra
+$(BUILD)/splash.o: $(SWITCH_PLATFORM)/splash.S $(BUILD)/game_splash.bgra
 	"$(CC)" $(ARCH) -pipe -c "$<" -o "$@"
 
 # Windows GCC/collect2 need a writable native temp path even for an object-only link.
