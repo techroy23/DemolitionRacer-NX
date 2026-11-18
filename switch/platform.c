@@ -4,10 +4,10 @@
 #include <string.h>
 #include <unistd.h>
 #include "diagnostics.h"
+#include "framebuffer_blit.h"
 
 #define XPORT_NO_PSYQ_CRITICAL_SECTION
 #include "psx_spu.h"
-#include "vid.h"
 #include "xport_trace.h"
 
 #define GAME_DIR "sdmc:/switch/DemolitionRacer"
@@ -22,6 +22,9 @@ static sint32 headless, quitting, exit_code;
 static bool game_running, video_initialized, shutting_down;
 static jmp_buf game_exit;
 static XportCleanup cleanup_handler;
+enum { DISPLAY_WIDTH = 1280, DISPLAY_HEIGHT = 720 };
+static Framebuffer switch_framebuffer;
+static uint64 present_attempts, presented_frames, failed_frames, nonblack_frames;
 static FILE *diagnostic_log;
 static DiagnosticLevel diagnostic_threshold = DIAGNOSTICS_INFO;
 static unsigned debug_lines;
@@ -132,20 +135,8 @@ void xport_timer_wait_frame(uint64 target_field)
 
 sint32 xport_render_wait_until(uint64 deadline)
 {
-    // EGL owns the swap interval. Like Windows, just test the deadline.
+    // The PS1 field clock owns pacing. Only test the requested deadline here.
     return xport_timer_get() < deadline;
-}
-
-void xport_present_complete(void)
-{
-    static bool reported_first_frame;
-    if (!reported_first_frame)
-    {
-        reported_first_frame = true;
-        switch_log(DIAGNOSTICS_DEBUG, "First frame presented");
-    }
-    // The renderer already swapped; don't wait for a second VBlank here.
-    pump_applet();
 }
 
 sint32 xport_poll(void)
@@ -156,7 +147,7 @@ sint32 xport_poll(void)
     return !quitting;
 }
 
-enum { PAD_COUNT = 2, VIBRATION_COUNT = 2 };
+enum { PAD_COUNT = 1, VIBRATION_COUNT = 2 };
 
 typedef struct {
     PadState input;
@@ -211,13 +202,12 @@ sint32 xport_input_init(void)
     if (!input_ready)
         padConfigureInput(PAD_COUNT, HidNpadStyleSet_NpadFullCtrl);
     padInitializeDefault(&pads[0].input);
-    padInitialize(&pads[1].input, HidNpadIdType_No2);
     for (unsigned i = 0; i < PAD_COUNT; ++i)
         memset(pads[i].axes, 128, sizeof(pads[i].axes));
     input_ready = true;
     input_overridden = false;
     override_buttons = 0;
-    switch_log(DIAGNOSTICS_DEBUG, "HID initialized for %u player slots", (unsigned)PAD_COUNT);
+    switch_log(DIAGNOSTICS_DEBUG, "HID initialized for player 1 only");
     return 1;
 }
 
@@ -244,7 +234,7 @@ static uint32 read_pad(sint32 controller)
         {HidNpadButton_StickR, PADj}
     };
     Controller *pad = &pads[controller];
-    HidNpadIdType id = controller ? HidNpadIdType_No2 : HidNpadIdType_No1;
+    HidNpadIdType id = HidNpadIdType_No1;
     uint32 buttons = 0;
     padUpdate(&pad->input);
     pad->analog = padIsConnected(&pad->input);
@@ -341,30 +331,91 @@ sint32 xport_window_init(void)
 {
     if (headless || video_initialized)
         return 1;
-    video_initialized = vid_init(NULL) != 0;
-    if (!video_initialized)
-        xport_message_error("VID", "Switch EGL/OpenGL initialization failed");
-    else
-        switch_log(DIAGNOSTICS_INFO, "EGL/GLES renderer initialized");
+    NWindow *window = nwindowGetDefault();
+    if (!window || !nwindowIsValid(window))
+    {
+        xport_message_error("Video", "Switch default display window is invalid");
+        return 0;
+    }
+    u32 window_width = 0, window_height = 0;
+    Result result = nwindowGetDimensions(window, &window_width, &window_height);
+    switch_log(DIAGNOSTICS_DEBUG, "Video native window before setup: %ux%u, result=0x%08x",
+               (unsigned)window_width, (unsigned)window_height, (unsigned)result);
+    result = framebufferCreate(&switch_framebuffer, window, DISPLAY_WIDTH, DISPLAY_HEIGHT,
+                               PIXEL_FORMAT_BGRA_8888, 2);
+    if (R_FAILED(result))
+    {
+        switch_log(DIAGNOSTICS_ERROR, "Video framebufferCreate failed: 0x%08x", (unsigned)result);
+        return 0;
+    }
+    result = framebufferMakeLinear(&switch_framebuffer);
+    if (R_FAILED(result))
+    {
+        framebufferClose(&switch_framebuffer);
+        switch_log(DIAGNOSTICS_ERROR, "Video framebufferMakeLinear failed: 0x%08x", (unsigned)result);
+        return 0;
+    }
+    video_initialized = true;
+    switch_log(DIAGNOSTICS_INFO, "Video: native libnx framebuffer %dx%d BGRA8888, active 960x720 (4:3), stride=%u bytes",
+               DISPLAY_WIDTH, DISPLAY_HEIGHT, (unsigned)switch_framebuffer.stride);
     return video_initialized;
 }
 
 sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_height,
                      sint32 source_x, sint32 source_y, sint32 source_width, sint32 source_height, const char *title)
 {
-    const VID_RECT src = {source_x, source_y, source_width, source_height};
     (void)title;
     if (headless)
         return 1;
-    sint32 presented = vid_blit(pixels, bitmap_width, bitmap_height, src);
-    static bool reported_first_blit;
-    if (presented && !reported_first_blit)
+    ++present_attempts;
+    if (!video_initialized && !xport_window_init())
     {
-        reported_first_blit = true;
-        switch_log(DIAGNOSTICS_DEBUG, "First framebuffer blit presented (%dx%d)",
-                   (int)source_width, (int)source_height);
+        ++failed_frames;
+        return 0;
     }
-    return presented;
+    u32 stride_bytes = 0;
+    uint32_t *destination = framebufferBegin(&switch_framebuffer, &stride_bytes);
+    uint32_t visible_colors = 0;
+    const FramebufferSource crop = {source_x, source_y, source_width, source_height};
+    bool copied = stride_bytes % sizeof(*destination) == 0 &&
+                  framebuffer_blit_4_3(destination, stride_bytes / sizeof(*destination),
+                                       DISPLAY_WIDTH, DISPLAY_HEIGHT, pixels, bitmap_width,
+                                       bitmap_height, crop, &visible_colors);
+    if (destination)
+        framebufferEnd(&switch_framebuffer);
+    if (!copied)
+    {
+        ++failed_frames;
+        if (failed_frames <= 8 || failed_frames % 180 == 0)
+            switch_log(DIAGNOSTICS_ERROR, "Video copy failed: attempt=%llu source=%dx%d crop=%d,%d %dx%d buffer=%s stride=%u",
+                       (unsigned long long)present_attempts, (int)bitmap_width, (int)bitmap_height,
+                       (int)source_x, (int)source_y, (int)source_width, (int)source_height,
+                       destination ? "available" : "null", (unsigned)stride_bytes);
+        return 0;
+    }
+    static FramebufferSource previous_crop;
+    static sint32 previous_width, previous_height;
+    static bool previous_nonblack;
+    bool nonblack = visible_colors != 0;
+    ++presented_frames;
+    if (nonblack)
+        ++nonblack_frames;
+    if (presented_frames <= 8 || presented_frames % 180 == 0 ||
+        bitmap_width != previous_width || bitmap_height != previous_height ||
+        source_x != previous_crop.x || source_y != previous_crop.y ||
+        source_width != previous_crop.width || source_height != previous_crop.height ||
+        nonblack != previous_nonblack)
+        switch_log(DIAGNOSTICS_DEBUG,
+                   "Video t=%llu ms frame=%llu source=%dx%d crop=%d,%d %dx%d rgb-or=%06x nonblack=%llu failures=%llu",
+                   (unsigned long long)(xport_timer_get() / 1000u), (unsigned long long)presented_frames,
+                   (int)bitmap_width, (int)bitmap_height, (int)source_x, (int)source_y,
+                   (int)source_width, (int)source_height, (unsigned)visible_colors,
+                   (unsigned long long)nonblack_frames, (unsigned long long)failed_frames);
+    previous_width = bitmap_width;
+    previous_height = bitmap_height;
+    previous_crop = crop;
+    previous_nonblack = nonblack;
+    return 1;
 }
 
 sint32 xport_is_headless(void) { return headless; }
@@ -690,7 +741,7 @@ void xport_shutdown(void)
     if (video_initialized)
     {
         video_initialized = false;
-        vid_free();
+        framebufferClose(&switch_framebuffer);
     }
     shutting_down = false;
 }
@@ -721,6 +772,10 @@ int main(void)
         xport_main();
     }
     game_running = false;
+    switch_log(DIAGNOSTICS_INFO, "Video totals: requested=%llu submitted=%llu nonblack=%llu failed=%llu; audio buffers=%u overruns=%u",
+               (unsigned long long)present_attempts, (unsigned long long)presented_frames,
+               (unsigned long long)nonblack_frames, (unsigned long long)failed_frames,
+               (unsigned)g_xport_audio_submitted_buffers, (unsigned)g_xport_audio_callback_overruns);
     xport_shutdown();
     if (exit_locked)
         appletUnlockExit();

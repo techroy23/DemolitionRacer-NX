@@ -4,6 +4,8 @@
 /pack/
 /dist/
 /evidence/local/
+/DemolitionRacer.log
+/DemolitionRacer.previous.log
 
 # Build and local tooling outputs
 /switch/build/

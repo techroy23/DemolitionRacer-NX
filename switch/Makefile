@@ -16,7 +16,7 @@ LIBNX := $(DEVKITPRO)/libnx
 PORTLIBS := $(DEVKITPRO)/portlibs/switch
 TOOLBIN := $(DEVKITPRO)/tools/bin
 CC := $(DEVKITA64)/bin/aarch64-none-elf-gcc
-# Mesa's static archives require the C++ runtime even when the game is all C.
+# Use the SDK's C++ link driver for the final NRO ELF.
 CXX := $(DEVKITA64)/bin/aarch64-none-elf-g++
 
 GAME := ../pseudocode/src
@@ -24,7 +24,7 @@ XPORT ?= ../.deps/xport
 RUNTIME := $(XPORT)/src
 BUILD := build
 NAME := DemolitionRacer
-VERSION := 0.1.1
+VERSION := 0.1.2
 BINARY := $(BUILD)/$(NAME)
 BUILD_MAKEFILE := $(firstword $(MAKEFILE_LIST))
 
@@ -54,15 +54,15 @@ GAME_SOURCES := \
  game_race_ai_recovery_route.c game_race_ai_special_motion.c game_race_ai_special_contact.c game_movie_boot.c \
  game_movie_controller.c game_movie_sdk.c
 
-# XPORT_SOURCES in xport's web Makefile, except browser main.c/video.c.
-RUNTIME_SOURCES := psx.c psx_gpu.c vid_ogl.c psx_font.c psx_spu.c psx_seq.c psx_xa.c \
+# Reuse the PSX software GPU; Switch presents its pixels directly through libnx.
+RUNTIME_SOURCES := psx.c psx_gpu.c psx_font.c psx_spu.c psx_seq.c psx_xa.c \
  psx_mdec.c psx_press.c psx_vlc.c psx_stream.c xport_fmv.c xport_trace.c
 GAME_OBJS := $(GAME_SOURCES:%.c=$(BUILD)/game/%.o)
 RUNTIME_OBJS := $(RUNTIME_SOURCES:%.c=$(BUILD)/xport/%.o)
-OBJS := $(GAME_OBJS) $(RUNTIME_OBJS) $(BUILD)/platform.o $(BUILD)/diagnostics.o
+OBJS := $(GAME_OBJS) $(RUNTIME_OBJS) $(BUILD)/platform.o $(BUILD)/diagnostics.o $(BUILD)/framebuffer_blit.o
 
 ARCH := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
-DEFINES := -D__SWITCH__ -DAP_SWITCH -DGAPI_OGL -DXPORT_NATIVE -DFIELD_RATE=60 \
+DEFINES := -D__SWITCH__ -DAP_SWITCH -DXPORT_NATIVE -DFIELD_RATE=60 \
  -DWND_WIDTH=960 -DWND_HEIGHT=720 -DWND_TITLE='"Demolition Racer"' -DSHORT_NAME='"DR"' \
  -DDRACER_VERSION='"$(VERSION)"' -DNDEBUG
 INCLUDES := -I"$(GAME)" -I"$(RUNTIME)" -isystem "$(LIBNX)/include" -isystem "$(PORTLIBS)/include"
@@ -72,13 +72,12 @@ COMPAT := -fms-extensions -funsigned-char -fno-strict-aliasing -fwrapv \
  -fno-builtin-ccos -fno-builtin-csin -fno-builtin-catan
 COMPILE.c = "$(CC)" $(ARCH) $(DEFINES) $(INCLUDES) $(CPPFLAGS) $(CFLAGS) -std=gnu11 $(COMPAT) \
  -ffunction-sections -fdata-sections -MMD -MP -c
-# OpenGL ES via Mesa EGL and the Switch nouveau driver.
-LIBS := -lEGL -lGLESv2 -lglapi -ldrm_nouveau -lnx -lm
+LIBS := -lnx -lm
 
 .PHONY: all objects clean
 all: $(BINARY).nro
-# Compile the game and reusable runtime without waiting for platform/renderer work.
-objects: $(GAME_OBJS) $(filter-out $(BUILD)/xport/vid_ogl.o,$(RUNTIME_OBJS))
+# Compile the game and reusable runtime without the platform objects.
+objects: $(GAME_OBJS) $(RUNTIME_OBJS)
 
 $(BUILD)/game/%.o: $(GAME)/%.c $(BUILD_MAKEFILE)
 	@mkdir -p "$(@D)"
@@ -88,20 +87,7 @@ $(BUILD)/xport/%.o: $(RUNTIME)/%.c $(BUILD_MAKEFILE)
 	@mkdir -p "$(@D)"
 	$(COMPILE.c) "$<" -o "$@"
 
-# Generate patched input in the build tree; never modify the pinned checkout.
-$(BUILD)/patched/vid_ogl.c: $(RUNTIME)/vid_ogl.c vid_ogl.patch $(BUILD_MAKEFILE)
-	@mkdir -p "$(@D)"
-	patch --batch --forward --fuzz=0 -o "$@" "$<" vid_ogl.patch
-
-$(BUILD)/xport/vid_ogl.o: $(BUILD)/patched/vid_ogl.c $(BUILD_MAKEFILE)
-	@mkdir -p "$(@D)"
-	$(COMPILE.c) "$<" -o "$@"
-
-$(BUILD)/platform.o: platform.c $(BUILD_MAKEFILE)
-	@mkdir -p "$(@D)"
-	$(COMPILE.c) "$<" -o "$@"
-
-$(BUILD)/diagnostics.o: diagnostics.c $(BUILD_MAKEFILE)
+$(BUILD)/%.o: %.c $(BUILD_MAKEFILE)
 	@mkdir -p "$(@D)"
 	$(COMPILE.c) "$<" -o "$@"
 

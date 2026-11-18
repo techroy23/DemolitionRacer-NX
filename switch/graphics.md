@@ -1,4 +1,10 @@
-# Switch EGL/GLES renderer
+# Switch video output
+
+Since 0.1.2 the shipping NRO uses libnx's linear double-buffered framebuffer. Both STR movies and game rendering already send CPU-generated pixels through `xport_present`. The port copies those pixels to BGRA8888 with opaque alpha and fits them into a centered 4:3 rectangle. It does not redraw the menus or replace art. See the [libnx framebuffer API](https://switchbrew.github.io/libnx/framebuffer_8h.html) and [simplegfx example](https://github.com/switchbrew/switch-examples/tree/master/graphics/simplegfx).
+
+On hardware, 0.1.1 played audio and read menu assets but remained black. The old success log was not proof of a buffer swap: `vid_blit` returned success even when the calculated output rectangle was empty. The exact device-side failure is still unknown. The new build bypasses EGL and logs source dimensions, sampled output colors, blank-to-nonblank transitions, and submission counts. A submission is not confirmation that the display showed the frame.
+
+## Historical EGL/GLES prototype (not built)
 
 `vid_ogl.patch` targets xport `5b304d489388d9e3ef2fb6e899f682920103d10b`.
 Apply it to a fresh build copy of `src/vid_ogl.c`, not to the dependency

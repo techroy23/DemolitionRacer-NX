@@ -40,7 +40,8 @@ Preserve original UI artwork, layout, fonts, typography, language, camera, physi
 - Make small, reviewable commits and run host parser/asset tests plus a clean Switch build after changes. Cross-compiling is not a substitute for an OLED runtime test.
 - M0: seven asset parser tests pass. The supplied BIN produced 383 archive entries, executable initialization data, and nine byte-for-byte verified STR/XA streams.
 - M1 (local build): clean devkitA64 build of 116 game and 13 compatibility-layer C files plus the Switch platform backend. The AArch64 ELF has no undefined symbols. The NRO contains Homebrew Menu metadata and no RomFS or bundled game assets.
-- Next gate: launch on the target OLED and capture cold boot through the first race. No on-device launch, gameplay test, or PS1 parity comparison has been performed.
+- OLED evidence: 0.1.1 reached FMV and menu audio but the screen stayed black. Its graphics success message was not proof of a swap. 0.1.2 submits the game's existing pixels directly through libnx, logs frame contents and cadence, and enables one controller for now.
+- Next gate: retest 0.1.2 on the OLED and capture cold boot through the first single-player race. Visual, gameplay, and timing parity are not yet verified.
 
 ## Sources
 

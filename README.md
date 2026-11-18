@@ -2,7 +2,7 @@
 
 A native homebrew port of `SLUS-00969`, the US PlayStation release, for the first-generation Switch OLED. The project builds the reconstructed game as AArch64 code and reads original artwork, tracks, and audio from a local asset pack. No emulator frontend or retail BIOS is used. See [PLAN.MD](PLAN.MD) for parity milestones and what has been verified.
 
-**Status: build verified, not play-tested on Switch.** The first native NRO is ready for an OLED boot test. Menu, loading-screen, racing, audio, and save parity remain unverified.
+**Status: 0.1.2 is ready for an OLED retest.** The 0.1.1 hardware test reached movie and menu audio but showed a black screen. This build uses direct framebuffer output and enables one controller only. Use the original single-player mode; its menus and artwork are unchanged.
 
 ## Prepare your game data
 
@@ -17,7 +17,7 @@ The tool checks the exact supported disc SHA-256 and makes `pack/DATA/` without 
 
 ## Build
 
-Install the Switch development packages following [devkitPro's Windows setup](https://devkitpro.org/wiki/Getting_Started). The build needs devkitA64, libnx, Switch packaging tools, and Switch Mesa (EGL/OpenGL ES). Invoke `make` from the devkitPro MSYS shell with its normal SDK environment. Run from the project root:
+Install the Switch development packages following [devkitPro's Windows setup](https://devkitpro.org/wiki/Getting_Started). The build needs devkitA64, libnx, and Switch packaging tools. Invoke `make` from the devkitPro MSYS shell with its normal SDK environment. Run from the project root:
 
 ```sh
 git submodule update --init -- .deps/xport
@@ -43,7 +43,7 @@ Start the NRO from the Homebrew Menu. For initial testing, use the full-memory H
 
 ## Settings and hardware logs
 
-`settings.yaml` is read at launch. The package ships with `LOG: DEBUG`, which records startup, graphics and audio initialization, first presentation, asset opens, and application errors. `INFO` keeps major events and errors; `ERROR` keeps errors only. A missing file or invalid `LOG` falls back to `INFO`. No original in-game options are changed.
+`settings.yaml` is read at launch. `LOG: DEBUG` records startup, framebuffer setup, early frames, source-size and blank/nonblank changes, periodic heartbeats, assets opened, and errors. `rgb-or=000000` means all copied RGB pixels were black. Successful submission alone does not prove the display showed the frame. `INFO` keeps major events and errors; `ERROR` keeps errors only. A missing file or invalid `LOG` falls back to `INFO`. No original in-game options are changed.
 
 If something goes wrong, send `sdmc:/switch/DemolitionRacer/DemolitionRacer.log` and tell us the last screen you saw and what you pressed. Copy it before relaunching if you can. The next launch normally moves it to `DemolitionRacer.previous.log`. Logging starts after the NRO reaches its entry point, and is not a crash dump; a failure before then may require a photo or the system error code.
 
