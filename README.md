@@ -2,6 +2,8 @@
 
 A native homebrew port of `SLUS-00969`, the US PlayStation release, for the first-generation Switch OLED. The project builds the reconstructed game as AArch64 code and reads original artwork, tracks, and audio from a local asset pack. No emulator frontend or retail BIOS is used. See [PLAN.MD](PLAN.MD) for parity milestones and what has been verified.
 
+**Status: build verified, not play-tested on Switch.** The first native NRO is ready for an OLED boot test. Menu, loading-screen, racing, audio, and save parity remain unverified.
+
 ## Prepare your game data
 
 Use your own unmodified US single-track `MODE2/2352` BIN. Python 3.11 or newer is required. Run these from the repository root in PowerShell or Git Bash:

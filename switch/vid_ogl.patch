@@ -1,0 +1,133 @@
+diff --git a/src/vid_ogl.c b/src/vid_ogl.c
+--- a/src/vid_ogl.c
++++ b/src/vid_ogl.c
+@@ -118,8 +118,17 @@
+ #if defined(AP_WEB)
+     #include <emscripten.h>
+     #include <emscripten/html5.h>
++static EMSCRIPTEN_WEBGL_CONTEXT_HANDLE vid_context;
++#elif defined(AP_SWITCH)
++    #include <switch.h>
++    #include <EGL/egl.h>
++static EGLDisplay vid_display = EGL_NO_DISPLAY;
++static EGLSurface vid_surface = EGL_NO_SURFACE;
++static EGLContext vid_context = EGL_NO_CONTEXT;
++#endif
++
++#if defined(AP_WEB) || defined(AP_SWITCH)
+     #include <GLES3/gl3.h>
+-static EMSCRIPTEN_WEBGL_CONTEXT_HANDLE vid_context;
+     #define VID_GLSL "#version 300 es\nprecision highp float;\nprecision highp int;\n"
+ #else
+     #include <windows.h>
+@@ -418,6 +427,21 @@
+ #if defined(AP_WEB)
+     if (vid_context)
+         emscripten_webgl_destroy_context(vid_context);
++#elif defined(AP_SWITCH)
++    if (vid_display != EGL_NO_DISPLAY)
++    {
++        if (vid_context != EGL_NO_CONTEXT)
++        {
++            if (eglGetCurrentContext() == vid_context)
++                eglMakeCurrent(vid_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
++            eglDestroyContext(vid_display, vid_context);
++        }
++        if (vid_surface != EGL_NO_SURFACE)
++            eglDestroySurface(vid_display, vid_surface);
++        eglTerminate(vid_display);
++        vid_display = EGL_NO_DISPLAY;
++        vid_surface = EGL_NO_SURFACE;
++    }
+ #else
+     wglMakeCurrent(NULL, NULL);
+     if (vid_context)
+@@ -429,6 +453,43 @@
+ #endif
+     vid_context = 0;
+ }
++
++#if defined(AP_SWITCH)
++static sint32 vid_egl_init(void *window)
++{
++    const EGLint config_attributes[] = {
++        EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
++        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
++        EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
++        EGL_DEPTH_SIZE, 24, EGL_SAMPLE_BUFFERS, 0,
++        EGL_NONE
++    };
++    const EGLint context_attributes[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
++    EGLConfig config;
++    EGLint count;
++    char log[64];
++
++    vid_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
++    if (vid_display == EGL_NO_DISPLAY || !eglInitialize(vid_display, NULL, NULL) ||
++        !eglBindAPI(EGL_OPENGL_ES_API) ||
++        !eglChooseConfig(vid_display, config_attributes, &config, 1, &count) || count == 0)
++        goto fail;
++    vid_surface = eglCreateWindowSurface(vid_display, config, window ? window : nwindowGetDefault(), NULL);
++    if (vid_surface == EGL_NO_SURFACE)
++        goto fail;
++    vid_context = eglCreateContext(vid_display, config, EGL_NO_CONTEXT, context_attributes);
++    if (vid_context == EGL_NO_CONTEXT || !eglMakeCurrent(vid_display, vid_surface, vid_surface, vid_context) ||
++        !eglSwapInterval(vid_display, 1))
++        goto fail;
++    return 1;
++
++fail:
++    snprintf(log, sizeof(log), "Could not initialize EGL/GLES 3 (EGL error 0x%04x)", (unsigned)eglGetError());
++    vid_context_free();
++    xport_message_error("VID EGL", log);
++    return 0;
++}
++#endif
+ 
+ static sint32 vid_context_init(void *window)
+ {
+@@ -455,6 +516,9 @@
+         vid_context = 0;
+         return 0;
+     }
++#elif defined(AP_SWITCH)
++    if (!vid_egl_init(window))
++        return 0;
+ #else
+     PIXELFORMATDESCRIPTOR format = {0};
+     PFNWGLCREATECONTEXTATTRIBSARBPROC create_context;
+@@ -557,6 +621,16 @@
+     emscripten_get_canvas_element_size("#canvas", &old_width, &old_height);
+     if (*width > 0 && *height > 0 && (*width != old_width || *height != old_height))
+         emscripten_set_canvas_element_size("#canvas", *width, *height);
++#elif defined(AP_SWITCH)
++    EGLint surface_width, surface_height;
++    *width = *height = 0;
++    if (vid_surface != EGL_NO_SURFACE &&
++        eglQuerySurface(vid_display, vid_surface, EGL_WIDTH, &surface_width) &&
++        eglQuerySurface(vid_display, vid_surface, EGL_HEIGHT, &surface_height))
++    {
++        *width = surface_width;
++        *height = surface_height;
++    }
+ #else
+     RECT rect;
+     *width = *height = 0;
+@@ -615,6 +689,8 @@
+ {
+ #if defined(AP_WEB)
+     return vid_render_status();
++#elif defined(AP_SWITCH)
++    return vid_render_status() && eglSwapBuffers(vid_display, vid_surface);
+ #else
+     return !vid_allocation_failed && SwapBuffers(vid_device) && glGetError() == GL_NO_ERROR;
+ 
+@@ -2812,7 +2888,7 @@
+         return 1;
+     vid_anisotropy_limit = 0.0f;
+     initialized = vid_context_init(window);
+-#if !defined(AP_WEB)
++#if !defined(AP_WEB) && !defined(AP_SWITCH)
+     if (initialized)
+         glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
+ #endif
