@@ -2,6 +2,7 @@
 /DATA/
 /DISC/
 /pack/
+/dist/
 /evidence/local/
 
 # Build and local tooling outputs

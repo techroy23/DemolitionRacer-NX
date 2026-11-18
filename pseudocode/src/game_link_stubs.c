@@ -5,6 +5,7 @@
     uint32 symbol() \
     { \
         FUNCTION_MARKER(address, image); \
+        xport_message_error("Demolition Racer: missing implementation", image ": " #symbol); \
         abort(); \
         return 0; \
     }

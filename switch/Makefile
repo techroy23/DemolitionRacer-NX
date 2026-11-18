@@ -24,6 +24,7 @@ XPORT ?= ../.deps/xport
 RUNTIME := $(XPORT)/src
 BUILD := build
 NAME := DemolitionRacer
+VERSION := 0.1.1
 BINARY := $(BUILD)/$(NAME)
 BUILD_MAKEFILE := $(firstword $(MAKEFILE_LIST))
 
@@ -58,11 +59,12 @@ RUNTIME_SOURCES := psx.c psx_gpu.c vid_ogl.c psx_font.c psx_spu.c psx_seq.c psx_
  psx_mdec.c psx_press.c psx_vlc.c psx_stream.c xport_fmv.c xport_trace.c
 GAME_OBJS := $(GAME_SOURCES:%.c=$(BUILD)/game/%.o)
 RUNTIME_OBJS := $(RUNTIME_SOURCES:%.c=$(BUILD)/xport/%.o)
-OBJS := $(GAME_OBJS) $(RUNTIME_OBJS) $(BUILD)/platform.o
+OBJS := $(GAME_OBJS) $(RUNTIME_OBJS) $(BUILD)/platform.o $(BUILD)/diagnostics.o
 
 ARCH := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 DEFINES := -D__SWITCH__ -DAP_SWITCH -DGAPI_OGL -DXPORT_NATIVE -DFIELD_RATE=60 \
- -DWND_WIDTH=960 -DWND_HEIGHT=720 -DWND_TITLE='"Demolition Racer"' -DSHORT_NAME='"DR"' -DNDEBUG
+ -DWND_WIDTH=960 -DWND_HEIGHT=720 -DWND_TITLE='"Demolition Racer"' -DSHORT_NAME='"DR"' \
+ -DDRACER_VERSION='"$(VERSION)"' -DNDEBUG
 INCLUDES := -I"$(GAME)" -I"$(RUNTIME)" -isystem "$(LIBNX)/include" -isystem "$(PORTLIBS)/include"
 CFLAGS ?= -O2 -g -pipe
 # The PsyQ-compatible integer trig names overlap GCC's complex math builtins.
@@ -99,6 +101,10 @@ $(BUILD)/platform.o: platform.c $(BUILD_MAKEFILE)
 	@mkdir -p "$(@D)"
 	$(COMPILE.c) "$<" -o "$@"
 
+$(BUILD)/diagnostics.o: diagnostics.c $(BUILD_MAKEFILE)
+	@mkdir -p "$(@D)"
+	$(COMPILE.c) "$<" -o "$@"
+
 # Windows GCC/collect2 need a writable native temp path even for an object-only link.
 # Use the build tree so this works independently of the SDK shell's /tmp mount.
 ifneq ($(filter MSYS% MINGW% CYGWIN%,$(shell uname -s)),)
@@ -113,7 +119,7 @@ $(BINARY).elf: $(OBJS) $(BUILD_MAKEFILE)
 
 $(BINARY).nacp: $(BUILD_MAKEFILE)
 	@mkdir -p "$(@D)"
-	"$(TOOLBIN)/nacptool" --create "Demolition Racer" "Demolition Racer xport contributors" "0.1.0" "$@"
+	"$(TOOLBIN)/nacptool" --create "Demolition Racer" "Demolition Racer xport contributors" "$(VERSION)" "$@"
 
 $(BINARY).nro: $(BINARY).elf $(BINARY).nacp
 	"$(TOOLBIN)/elf2nro" "$<" "$@" --nacp="$(BINARY).nacp"

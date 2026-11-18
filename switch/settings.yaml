@@ -1,0 +1,3 @@
+# Demolition Racer Switch settings. Read when the NRO starts.
+# LOG: DEBUG (asset and startup details), INFO (major events), or ERROR.
+LOG: DEBUG

@@ -26,17 +26,26 @@ make -C switch
 
 Output: `switch/build/DemolitionRacer.nro`. The build does not need the retail files and must not embed them.
 
-## Install on an existing homebrew setup
+## Package and install on an existing homebrew setup
 
-With the Switch powered down or the SD card safely accessible, put these two items together:
+After building the NRO and preparing the assets, run `python tools/package_switch.py` from the repository root. It creates `dist/` with the exact SD card layout. The script refuses to overwrite an existing package; move the old `dist/` aside or pass `--out` with a new directory.
+
+Copy the **contents of `dist/`** to the root of the Switch SD card, merging with its existing `switch/` directory. You should end up with:
 
 ```text
 sdmc:/switch/DemolitionRacer/
   DemolitionRacer.nro
-  DATA/                <- copy pack/DATA/ here
+  settings.yaml
+  DATA/
 ```
 
-Start the NRO from the Homebrew Menu. For initial testing, use the full-memory Homebrew Menu mode. Do not share the `DATA/`, `DISC/`, or `pack/` directories. No game files or console firmware modifications are included here.
+Start the NRO from the Homebrew Menu. For initial testing, use the full-memory Homebrew Menu mode. Keep `dist/` private because it contains your extracted game assets.
+
+## Settings and hardware logs
+
+`settings.yaml` is read at launch. The package ships with `LOG: DEBUG`, which records startup, graphics and audio initialization, first presentation, asset opens, and application errors. `INFO` keeps major events and errors; `ERROR` keeps errors only. A missing file or invalid `LOG` falls back to `INFO`. No original in-game options are changed.
+
+If something goes wrong, send `sdmc:/switch/DemolitionRacer/DemolitionRacer.log` and tell us the last screen you saw and what you pressed. Copy it before relaunching if you can. The next launch normally moves it to `DemolitionRacer.previous.log`. Logging starts after the NRO reaches its entry point, and is not a crash dump; a failure before then may require a photo or the system error code.
 
 ## Source provenance
 

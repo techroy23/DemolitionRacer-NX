@@ -1,0 +1,45 @@
+#include "diagnostics.h"
+#include <assert.h>
+#include <string.h>
+
+static FILE *stream_with(const char *text)
+{
+    FILE *stream = tmpfile();
+    assert(stream && fputs(text, stream) >= 0);
+    rewind(stream);
+    return stream;
+}
+
+int main(void)
+{
+    FILE *settings = stream_with("# Local settings\r\nLOG: DEBUG # verbose\r\n");
+    assert(diagnostics_read_settings(settings) == DIAGNOSTICS_DEBUG);
+    fclose(settings);
+    settings = stream_with("LOG: INFO\n");
+    assert(diagnostics_read_settings(settings) == DIAGNOSTICS_INFO);
+    fclose(settings);
+    settings = stream_with("LOG: UNKNOWN\n");
+    assert(diagnostics_read_settings(settings) == DIAGNOSTICS_INVALID);
+    fclose(settings);
+    settings = stream_with("LOG: DEBUG\nLOG: INFO\n");
+    assert(diagnostics_read_settings(settings) == DIAGNOSTICS_INVALID);
+    fclose(settings);
+    settings = stream_with("\xef\xbb\xbf" "LOG: \"DEBUG\"\n");
+    assert(diagnostics_read_settings(settings) == DIAGNOSTICS_DEBUG);
+    fclose(settings);
+    settings = stream_with("LOG: DEBUG#not-a-comment\n");
+    assert(diagnostics_read_settings(settings) == DIAGNOSTICS_INVALID);
+    fclose(settings);
+    FILE *log = tmpfile();
+    assert(log);
+    assert(diagnostics_write(log, DIAGNOSTICS_INFO, DIAGNOSTICS_DEBUG, "hidden"));
+    assert(diagnostics_write(log, DIAGNOSTICS_DEBUG, DIAGNOSTICS_DEBUG, "opened %s", "DATA/INTRO.STR"));
+    assert(diagnostics_write(log, DIAGNOSTICS_DEBUG, DIAGNOSTICS_ERROR, "failure"));
+    rewind(log);
+    char lines[128];
+    assert(fgets(lines, sizeof(lines), log) && strcmp(lines, "[DEBUG] opened DATA/INTRO.STR\n") == 0);
+    assert(fgets(lines, sizeof(lines), log) && strcmp(lines, "[ERROR] failure\n") == 0);
+    assert(fgetc(log) == EOF);
+    fclose(log);
+    return 0;
+}

@@ -20,7 +20,7 @@ Preserve original UI artwork, layout, fonts, typography, language, camera, physi
 | Milestone | Work | Exit criteria |
 | --- | --- | --- |
 | M0. Source and media | Pin dependencies, record the disc revision, keep asset prep deterministic, inspect native entry and indirect calls | License and revisions documented; asset prep works on this BIN; raw STR/XA headers retained; no assets staged |
-| M1. Native build | Cross-compile original C and compatibility services, add Switch graphics, audio, controller, clock, SD, and lifecycle backends; link NRO | ELF verifies AArch64; NRO header and launch metadata valid; no retail files embedded; no runtime CPU core; representative test launch on an OLED still required after a local cross-build |
+| M1. Native build | Cross-compile original C and compatibility services, add Switch graphics, audio, controller, clock, SD, and lifecycle backends; link NRO and stage a private `dist/` with debug settings | ELF verifies AArch64; NRO header and launch metadata valid; no retail files embedded; no runtime CPU core; representative test launch on an OLED still required after a local cross-build |
 | M2. Boot and menus | Compare logos, intro and skip behavior, title attract cycle, options, controls, selection, records and two-player entry | Same menu order, button edges, artwork, positions, colors, text, fades, and audio cues; missing data fails visibly outside the game UI |
 | M3. Load and first race | Follow actual asset requests into loading transition, pre-race camera, countdown, one full race, results, replay/restart and return | Matching load artwork and transition states, HUD, tracks, cars, audio, input and seeded gameplay traces; differences documented with frames and state deltas |
 | M4. Full parity | Cover every mode/track/car/state present in PS1 reference, local two-player, persistence, credits and all movie paths; fix reachable stubs from evidence | No unexplained stub or fallback hit in coverage runs; original scoring, unlocks, AI, damage and results; save survives reload; controls work on handheld and paired controllers |
@@ -35,7 +35,7 @@ Preserve original UI artwork, layout, fonts, typography, language, camera, physi
 
 ## Development workflow
 
-- Keep `DATA/`, `DISC/`, `pack/`, and generated artifacts untracked. Only commit source, tests, metadata, and dependency pins. Check `git diff --cached --name-only` before each commit. Do not publish copyrighted game content.
+- Keep `DATA/`, `DISC/`, `pack/`, `dist/`, and generated artifacts untracked. Only commit source, tests, metadata, and dependency pins. Check `git diff --cached --name-only` before each commit. Do not publish copyrighted game content.
 - Keep hardware services separate from game logic. Preserve 32-bit guest pointer math, signed-width semantics, packet layout, fixed-point movement, and input/timing contracts when adapting to AArch64. Audit reachable calls and overlays before calling the port complete.
 - Make small, reviewable commits and run host parser/asset tests plus a clean Switch build after changes. Cross-compiling is not a substitute for an OLED runtime test.
 - M0: seven asset parser tests pass. The supplied BIN produced 383 archive entries, executable initialization data, and nine byte-for-byte verified STR/XA streams.

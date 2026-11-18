@@ -3,6 +3,7 @@
 #include <setjmp.h>
 #include <string.h>
 #include <unistd.h>
+#include "diagnostics.h"
 
 #define XPORT_NO_PSYQ_CRITICAL_SECTION
 #include "psx_spu.h"
@@ -10,6 +11,9 @@
 #include "xport_trace.h"
 
 #define GAME_DIR "sdmc:/switch/DemolitionRacer"
+#define SETTINGS_PATH GAME_DIR "/settings.yaml"
+#define LOG_PATH GAME_DIR "/DemolitionRacer.log"
+#define PREVIOUS_LOG_PATH GAME_DIR "/DemolitionRacer.previous.log"
 #define SAVE_FILE "DemolitionRacer.sav"
 #define SAVE_TEMP SAVE_FILE ".tmp"
 #define SAVE_BACKUP SAVE_FILE ".bak"
@@ -18,6 +22,73 @@ static sint32 headless, quitting, exit_code;
 static bool game_running, video_initialized, shutting_down;
 static jmp_buf game_exit;
 static XportCleanup cleanup_handler;
+static FILE *diagnostic_log;
+static DiagnosticLevel diagnostic_threshold = DIAGNOSTICS_INFO;
+static unsigned debug_lines;
+
+static void switch_log(DiagnosticLevel level, const char *format, ...) DIAGNOSTICS_FORMAT(2, 3);
+
+static void switch_log(DiagnosticLevel level, const char *format, ...)
+{
+    if (!diagnostic_log || level > diagnostic_threshold)
+        return;
+    if (level == DIAGNOSTICS_DEBUG && debug_lines >= 4096)
+        return;
+    va_list arguments;
+    va_start(arguments, format);
+    bool written = diagnostics_vwrite(diagnostic_log, diagnostic_threshold, level, format, arguments);
+    va_end(arguments);
+    if (written && level == DIAGNOSTICS_DEBUG && ++debug_lines == 4096)
+        written = diagnostics_write(diagnostic_log, diagnostic_threshold, DIAGNOSTICS_INFO,
+                                    "Debug event limit reached; INFO and ERROR remain enabled");
+    if (level == DIAGNOSTICS_ERROR)
+        fsync(fileno(diagnostic_log));
+    if (!written)
+    {
+        fprintf(stderr, "Could not write %s\n", LOG_PATH);
+        fclose(diagnostic_log);
+        diagnostic_log = NULL;
+    }
+}
+
+static void start_diagnostics(void)
+{
+    FILE *settings = fopen(SETTINGS_PATH, "rb");
+    int settings_error = settings ? 0 : errno;
+    DiagnosticLevel requested = settings ? diagnostics_read_settings(settings) : DIAGNOSTICS_INFO;
+    if (settings)
+        fclose(settings);
+    diagnostic_threshold = requested == DIAGNOSTICS_INVALID ? DIAGNOSTICS_INFO : requested;
+
+    const char *log_mode = "w";
+    FILE *previous_run = fopen(LOG_PATH, "rb");
+    if (previous_run)
+    {
+        fclose(previous_run);
+        if ((remove(PREVIOUS_LOG_PATH) != 0 && errno != ENOENT) || rename(LOG_PATH, PREVIOUS_LOG_PATH) != 0)
+            log_mode = "a";
+    }
+    else if (errno != ENOENT)
+        log_mode = "a";
+    diagnostic_log = fopen(LOG_PATH, log_mode);
+    if (!diagnostic_log)
+        fprintf(stderr, "Could not open %s (errno=%d)\n", LOG_PATH, errno);
+    switch_log(DIAGNOSTICS_INFO, "Demolition Racer Switch " DRACER_VERSION " starting; LOG=%s; applet type=%d",
+               diagnostics_level_name(diagnostic_threshold), (int)appletGetAppletType());
+    if (requested == DIAGNOSTICS_INVALID)
+        switch_log(DIAGNOSTICS_ERROR, "Invalid LOG in settings.yaml; using INFO");
+    else if (settings_error && settings_error != ENOENT)
+        switch_log(DIAGNOSTICS_ERROR, "Could not read settings.yaml (errno=%d); using INFO", settings_error);
+}
+
+static void close_diagnostics(void)
+{
+    if (diagnostic_log)
+    {
+        fclose(diagnostic_log);
+        diagnostic_log = NULL;
+    }
+}
 
 int xport_hd = 1;
 
@@ -28,7 +99,10 @@ static u64 clock_frequency;
 static void pump_applet(void)
 {
     if (!quitting && !appletMainLoop())
+    {
         quitting = 1;
+        switch_log(DIAGNOSTICS_INFO, "Homebrew exit requested");
+    }
     // Native game loops don't all check the result of xport_poll().
     if (quitting && game_running)
         longjmp(game_exit, 1);
@@ -64,6 +138,12 @@ sint32 xport_render_wait_until(uint64 deadline)
 
 void xport_present_complete(void)
 {
+    static bool reported_first_frame;
+    if (!reported_first_frame)
+    {
+        reported_first_frame = true;
+        switch_log(DIAGNOSTICS_DEBUG, "First frame presented");
+    }
     // The renderer already swapped; don't wait for a second VBlank here.
     pump_applet();
 }
@@ -137,6 +217,7 @@ sint32 xport_input_init(void)
     input_ready = true;
     input_overridden = false;
     override_buttons = 0;
+    switch_log(DIAGNOSTICS_DEBUG, "HID initialized for %u player slots", (unsigned)PAD_COUNT);
     return 1;
 }
 
@@ -263,6 +344,8 @@ sint32 xport_window_init(void)
     video_initialized = vid_init(NULL) != 0;
     if (!video_initialized)
         xport_message_error("VID", "Switch EGL/OpenGL initialization failed");
+    else
+        switch_log(DIAGNOSTICS_INFO, "EGL/GLES renderer initialized");
     return video_initialized;
 }
 
@@ -271,7 +354,17 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
 {
     const VID_RECT src = {source_x, source_y, source_width, source_height};
     (void)title;
-    return headless ? 1 : vid_blit(pixels, bitmap_width, bitmap_height, src);
+    if (headless)
+        return 1;
+    sint32 presented = vid_blit(pixels, bitmap_width, bitmap_height, src);
+    static bool reported_first_blit;
+    if (presented && !reported_first_blit)
+    {
+        reported_first_blit = true;
+        switch_log(DIAGNOSTICS_DEBUG, "First framebuffer blit presented (%dx%d)",
+                   (int)source_width, (int)source_height);
+    }
+    return presented;
 }
 
 sint32 xport_is_headless(void) { return headless; }
@@ -322,6 +415,8 @@ sint32 xport_audio_init(void)
         g_xport_audio_backend_active = 1;
     }
     audio_running = true;
+    if (audout_open)
+        switch_log(DIAGNOSTICS_INFO, "Switch audout initialized at %u Hz", (unsigned)AUDIO_OUTPUT_RATE);
     return 1;
 
 fail:
@@ -457,7 +552,14 @@ FILE *xport_fopen(const char *path, const char *mode)
         errno = EINVAL;
         return NULL;
     }
-    return fopen(path, mode);
+    FILE *file = fopen(path, mode);
+    int open_error = errno;
+    if (file)
+        switch_log(DIAGNOSTICS_DEBUG, "Opened %s (%s)", path, mode);
+    else
+        switch_log(DIAGNOSTICS_DEBUG, "Could not open %s (%s, errno=%d)", path, mode, open_error);
+    errno = open_error;
+    return file;
 }
 
 static long stream_length(FILE *file)
@@ -564,7 +666,10 @@ sint32 xport_memory_readable(const void *address, size_t size)
 
 void xport_message_error(const char *title, const char *message)
 {
-    fprintf(stderr, "%s: %s\n", title ? title : "Demolition Racer", message ? message : "Unknown error");
+    const char *error_title = title ? title : "Demolition Racer";
+    const char *error_message = message ? message : "Unknown error";
+    fprintf(stderr, "%s: %s\n", error_title, error_message);
+    switch_log(DIAGNOSTICS_ERROR, "%s: %s", error_title, error_message);
 }
 
 void xport_set_cleanup(void (*cleanup)(void)) { cleanup_handler = cleanup; }
@@ -592,13 +697,16 @@ void xport_shutdown(void)
 
 int main(void)
 {
+    start_diagnostics();
     // libnx's CRT mounts sdmc:. Use a fixed cwd for both xport and direct stdio.
     if (chdir(GAME_DIR) != 0)
     {
         xport_message_error("Demolition Racer", "Cannot enter " GAME_DIR);
+        close_diagnostics();
         return 2;
     }
     const bool exit_locked = R_SUCCEEDED(appletLockExit());
+    switch_log(DIAGNOSTICS_DEBUG, "Applet exit lock: %s", exit_locked ? "acquired" : "unavailable");
     xport_memory_init(DRAM, sizeof(DRAM), (uint8 *)SCRATCHPAD, sizeof(SCRATCHPAD), NULL, 0u);
 #if defined(XPORT_NATIVE_VM) && XPORT_NATIVE_VM
     xport_memory_bind_mmio(0x1F801C00, 0x200, spu_mmio_read, spu_mmio_write, NULL);
@@ -609,11 +717,14 @@ int main(void)
     {
         game_running = true;
         pump_applet();
+        switch_log(DIAGNOSTICS_INFO, "Entering reconstructed PS1 game code");
         xport_main();
     }
     game_running = false;
     xport_shutdown();
     if (exit_locked)
         appletUnlockExit();
+    switch_log(DIAGNOSTICS_INFO, "Shutdown complete (exit code=%d)", (int)exit_code);
+    close_diagnostics();
     return exit_code;
 }
