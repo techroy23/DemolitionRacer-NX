@@ -38,5 +38,5 @@ If something breaks, share the dated `.log` file next to the NRO and say what wa
 
 - [Project goals, status, and credits](project.md)
 - [Build, settings, and technical notes](technical.md)
-- [Install instructions for AI assistants](ai.md)
+- [Install instructions for AI assistants](AI.md)
 - [Porting plan and parity checks](PLAN.MD)
