@@ -55,7 +55,7 @@
       <DisableSpecificWarnings>4100;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>GAPI_OGL;_CRT_SECURE_NO_WARNINGS;FULL_NAME="Demolition Racer";WND_TITLE="Demolition Racer (xport)";WND_WIDTH=960;WND_HEIGHT=720;FIELD_RATE=60;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(ProjectDir)..\..;$(ProjectDir)..\..\..\third_party\xport\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..;$(ProjectDir)..\..\xport\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <CompileAs>CompileAsC</CompileAs>
       <Optimization>Disabled</Optimization>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
@@ -78,7 +78,7 @@
       <DisableSpecificWarnings>4100;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>GAPI_OGL;_CRT_SECURE_NO_WARNINGS;FULL_NAME="Demolition Racer";WND_TITLE="Demolition Racer (xport)";WND_WIDTH=960;WND_HEIGHT=720;FIELD_RATE=60;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(ProjectDir)..\..;$(ProjectDir)..\..\..\third_party\xport\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..;$(ProjectDir)..\..\xport\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <CompileAs>CompileAsC</CompileAs>
       <Optimization>MaxSpeed</Optimization>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
@@ -98,22 +98,22 @@
   <ItemGroup>
     <ClCompile Include="..\..\game_main.c" />
     <ClCompile Include="..\..\game_data.c" />
-    <ClCompile Include="..\..\..\third_party\xport\src\psx.c" />
-    <ClCompile Include="..\..\..\third_party\xport\src\vid_ogl.c" />
-    <ClCompile Include="..\..\..\third_party\xport\src\psx_gpu.c" />
-    <ClCompile Include="..\..\..\third_party\xport\src\psx_spu.c" />
-    <ClCompile Include="..\..\..\third_party\xport\src\xport_trace.c" />
-    <ClCompile Include="..\..\..\third_party\xport\src\platform\win\main.c">
+    <ClCompile Include="..\..\xport\src\psx.c" />
+    <ClCompile Include="..\..\xport\src\vid_ogl.c" />
+    <ClCompile Include="..\..\xport\src\psx_gpu.c" />
+    <ClCompile Include="..\..\xport\src\psx_spu.c" />
+    <ClCompile Include="..\..\xport\src\xport_trace.c" />
+    <ClCompile Include="..\..\xport\src\platform\win\main.c">
       <PreprocessorDefinitions>SHORT_NAME="DR";%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ObjectFileName>$(IntDir)xport_main.obj</ObjectFileName>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\..\..\third_party\xport\src\xport.h" />
-    <ClInclude Include="..\..\..\third_party\xport\src\psx.h" />
-    <ClInclude Include="..\..\..\third_party\xport\src\xport_trace.h" />
-    <ClInclude Include="..\..\..\third_party\xport\src\psx_gpu.h" />
-    <ClInclude Include="..\..\..\third_party\xport\src\psx_spu.h" />
+    <ClInclude Include="..\..\xport\src\xport.h" />
+    <ClInclude Include="..\..\xport\src\psx.h" />
+    <ClInclude Include="..\..\xport\src\xport_trace.h" />
+    <ClInclude Include="..\..\xport\src\psx_gpu.h" />
+    <ClInclude Include="..\..\xport\src\psx_spu.h" />
   </ItemGroup>
   <PropertyGroup Label="XportTemplateSync">
     <UseXcrt Condition="'$(UseXcrt)'==''">true</UseXcrt>
@@ -212,7 +212,7 @@
       <AdditionalIncludeDirectories>$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Image Include="icon.ico" />
-    <ClCompile Include="..\..\..\third_party\xport\src\platform\win\xcrt.c">
+    <ClCompile Include="..\..\xport\src\platform\win\xcrt.c">
       <ExcludedFromBuild Condition="'$(XcrtEnabled)'!='true'">true</ExcludedFromBuild>
       <CompileAs>CompileAsC</CompileAs>
       <WholeProgramOptimization>false</WholeProgramOptimization>
@@ -398,14 +398,14 @@
     <ClCompile Include="..\..\game_movie_boot.c" />
     <ClCompile Include="..\..\game_movie_controller.c" />
     <ClCompile Include="..\..\game_movie_sdk.c" />
-    <ClCompile Include="..\..\..\third_party\xport\src\psx_mdec.c" />
-    <ClCompile Include="..\..\..\third_party\xport\src\psx_press.c" />
-    <ClCompile Include="..\..\..\third_party\xport\src\psx_vlc.c" />
-    <ClCompile Include="..\..\..\third_party\xport\src\psx_stream.c" />
-    <ClCompile Include="..\..\..\third_party\xport\src\psx_xa.c" />
+    <ClCompile Include="..\..\xport\src\psx_mdec.c" />
+    <ClCompile Include="..\..\xport\src\psx_press.c" />
+    <ClCompile Include="..\..\xport\src\psx_vlc.c" />
+    <ClCompile Include="..\..\xport\src\psx_stream.c" />
+    <ClCompile Include="..\..\xport\src\psx_xa.c" />
   </ItemGroup>
   <ItemGroup>
-    <MASM Include="..\..\..\third_party\xport\src\platform\win\xcrt_x86.asm">
+    <MASM Include="..\..\xport\src\platform\win\xcrt_x86.asm">
       <ExcludedFromBuild Condition="'$(XcrtEnabled)'!='true'">true</ExcludedFromBuild>
     </MASM>
   </ItemGroup>

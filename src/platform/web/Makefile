@@ -125,4 +125,4 @@ APP_DEFINES += -DXPORT_DISABLE_FUNCTION_MARKERS
 endif
 WEB_EXCLUDE_FILES := DATA/DD.DAT DATA/_ZYXWVUT.ZYX DATA/MOVPLAY.EXE DATA/*.XA
 DIST_DIR ?= $(PROJECT_ROOT)/.github/site/$(SHORT_NAME)
-include $(PROJECT_ROOT)/third_party/xport/src/platform/web/Makefile
+include $(PROJECT_ROOT)/src/xport/src/platform/web/Makefile

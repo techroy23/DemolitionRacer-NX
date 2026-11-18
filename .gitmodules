@@ -1,3 +1,3 @@
 [submodule ".deps/xport"]
-	path = third_party/xport
+	path = src/xport
 	url = https://github.com/psxports/xport.git

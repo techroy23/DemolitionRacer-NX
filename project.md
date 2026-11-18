@@ -11,7 +11,7 @@ This is an unofficial native homebrew port of the US PlayStation release of *Dem
 ## Source and credits
 
 - `src/` is the locally maintained application source, based on the reconstructed [DemolitionRacer-xport baseline](https://github.com/psxports/DemolitionRacer-xport/commit/d7d82178d7ec1fc1614391ceeb6a705b5bb1fde7). It is not the original developer's source code. The upstream MIT notice is retained in [LICENSE](LICENSE).
-- [`third_party/xport/`](third_party/xport) is the pinned [xport](https://github.com/psxports/xport) compatibility library. It has its own MIT notice. It is a dependency, not the game itself.
+- [`src/xport/`](src/xport) is the pinned [xport](https://github.com/psxports/xport) compatibility library. It has its own MIT notice. It is a dependency, not the game itself.
 - The software license does not grant rights to the retail game or its media. Each player supplies their own disc dump. Keep `DISC/`, `DATA/`, `pack/`, and `dist/` out of Git, and don't attach retail files to issues or releases.
 
 See [README.md](README.md) to install the port or [technical.md](technical.md) to build and troubleshoot it.

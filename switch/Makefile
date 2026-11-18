@@ -21,7 +21,7 @@ CXX := $(DEVKITA64)/bin/aarch64-none-elf-g++
 
 GAME := ../src
 SWITCH_PLATFORM := $(GAME)/platform/switch
-XPORT ?= ../third_party/xport
+XPORT ?= $(GAME)/xport
 RUNTIME := $(XPORT)/src
 BUILD := build
 NAME := DemolitionRacer

@@ -13,13 +13,13 @@ checkout. From the project root in Git Bash:
 ```sh
 root=$(pwd -W)
 mkdir -p build/switch-vid/src
-cp third_party/xport/src/vid_ogl.c build/switch-vid/src/
+cp src/xport/src/vid_ogl.c build/switch-vid/src/
 git apply --ignore-space-change --directory=build/switch-vid switch/vid_ogl.patch
 ```
 
 `--ignore-space-change` allows the LF patch to match the pinned CRLF source.
 Compile the generated `build/switch-vid/src/vid_ogl.c` **instead of** the original
-and add `-I"$root/third_party/xport/src"` for its xport headers. Use the normal
+and add `-I"$root/src/xport/src"` for its xport headers. Use the normal
 libnx Switch flags (including `-D__SWITCH__`), libnx and Switch portlibs include
 paths, and `-DAP_SWITCH -DGAPI_OGL -DXPORT_NATIVE -DFIELD_RATE=60` plus the
 project's `WND_TITLE`, `WND_WIDTH`, and `WND_HEIGHT` definitions. Do not define

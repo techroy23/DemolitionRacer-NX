@@ -5,7 +5,7 @@
 | Path | What it contains |
 | --- | --- |
 | `src/` | Reconstructed game logic, plus Windows, web, and Switch platform code under `src/platform/`. |
-| `third_party/xport/` | Pinned compatibility library providing PS1-style services used by the game code. |
+| `src/xport/` | Pinned Git submodule for the PS1 compatibility library. It lives alongside the game source without copying files out of the upstream checkout. |
 | `switch/` | Switch build rules and default configuration; compiled artifacts go in `switch/build/`. |
 | `tools/`, `tests/` | Disc extraction, artwork preparation, packaging, and host tests. |
 
@@ -16,7 +16,7 @@ The Switch build compiles the game to AArch64 and links the needed compatibility
 Use a Git checkout so you can initialize the submodule. Install the Switch development packages from [devkitPro](https://devkitpro.org/wiki/Getting_Started), including devkitA64, libnx, and the NRO packaging tools. Install Pillow for the same Python interpreter the build uses (`python -m pip install Pillow`). On Windows, run the build from the devkitPro MSYS shell. Start in the repository root:
 
 ```sh
-git submodule update --init -- third_party/xport
+git submodule update --init -- src/xport
 make -C switch
 ```
 
