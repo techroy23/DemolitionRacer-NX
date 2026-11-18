@@ -1,3 +1,7 @@
 # Demolition Racer Switch settings. Read when the NRO starts.
 # LOG: DEBUG (asset and startup details), INFO (major events), or ERROR.
 LOG: DEBUG
+# The FPS counter measures Switch framebuffer submissions, not unique game frames.
+FPS_OVERLAY: false
+# FIT (default), x2 (640x480), x3 (960x720), or x4 (1280x960 where supported).
+UPSCALE: FIT

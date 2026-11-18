@@ -6,6 +6,7 @@
 /evidence/local/
 /DemolitionRacer.log
 /DemolitionRacer.previous.log
+/DemolitionRacer_*.log
 
 # Build and local tooling outputs
 /switch/build/

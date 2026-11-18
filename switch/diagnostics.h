@@ -12,6 +12,14 @@ typedef enum {
     DIAGNOSTICS_DEBUG
 } DiagnosticLevel;
 
+typedef struct {
+    DiagnosticLevel level;
+    bool fps_overlay;
+    unsigned upscale;
+} DiagnosticSettings;
+
+bool diagnostics_parse_settings(FILE *settings, DiagnosticSettings *configuration);
+
 #if defined(__GNUC__)
 #define DIAGNOSTICS_FORMAT(format_index, first_argument_index) \
     __attribute__((__format__(__printf__, format_index, first_argument_index)))

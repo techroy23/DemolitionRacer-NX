@@ -1,8 +1,10 @@
 #include <switch.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <setjmp.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/stat.h>
 #include "diagnostics.h"
 #include "framebuffer_blit.h"
 
@@ -12,9 +14,9 @@
 
 #define GAME_DIR "sdmc:/switch/DemolitionRacer"
 #define SETTINGS_PATH GAME_DIR "/settings.yaml"
-#define LOG_PATH GAME_DIR "/DemolitionRacer.log"
-#define PREVIOUS_LOG_PATH GAME_DIR "/DemolitionRacer.previous.log"
-#define SAVE_FILE "DemolitionRacer.sav"
+#define SAVE_DIRECTORY "SAVE"
+#define LEGACY_SAVE "DemolitionRacer.sav"
+#define SAVE_FILE SAVE_DIRECTORY "/" LEGACY_SAVE
 #define SAVE_TEMP SAVE_FILE ".tmp"
 #define SAVE_BACKUP SAVE_FILE ".bak"
 
@@ -22,12 +24,16 @@ static sint32 headless, quitting, exit_code;
 static bool game_running, video_initialized, shutting_down;
 static jmp_buf game_exit;
 static XportCleanup cleanup_handler;
-enum { DISPLAY_WIDTH = 1280, DISPLAY_HEIGHT = 720 };
+static int display_width = 1280, display_height = 720;
 static Framebuffer switch_framebuffer;
 static uint64 present_attempts, presented_frames, failed_frames, nonblack_frames;
 static FILE *diagnostic_log;
 static DiagnosticLevel diagnostic_threshold = DIAGNOSTICS_INFO;
 static unsigned debug_lines;
+static DiagnosticSettings game_settings;
+static char diagnostic_path[160];
+static PadState exit_pad;
+static bool exit_pad_ready;
 
 static void switch_log(DiagnosticLevel level, const char *format, ...) DIAGNOSTICS_FORMAT(2, 3);
 
@@ -39,7 +45,8 @@ static void switch_log(DiagnosticLevel level, const char *format, ...)
         return;
     va_list arguments;
     va_start(arguments, format);
-    bool written = diagnostics_vwrite(diagnostic_log, diagnostic_threshold, level, format, arguments);
+    bool written = fprintf(diagnostic_log, "[%10llu ms] ", (unsigned long long)(xport_timer_get() / 1000)) >= 0 &&
+                   diagnostics_vwrite(diagnostic_log, diagnostic_threshold, level, format, arguments);
     va_end(arguments);
     if (written && level == DIAGNOSTICS_DEBUG && ++debug_lines == 4096)
         written = diagnostics_write(diagnostic_log, diagnostic_threshold, DIAGNOSTICS_INFO,
@@ -48,7 +55,7 @@ static void switch_log(DiagnosticLevel level, const char *format, ...)
         fsync(fileno(diagnostic_log));
     if (!written)
     {
-        fprintf(stderr, "Could not write %s\n", LOG_PATH);
+        fprintf(stderr, "Could not write %s\n", diagnostic_path);
         fclose(diagnostic_log);
         diagnostic_log = NULL;
     }
@@ -58,28 +65,52 @@ static void start_diagnostics(void)
 {
     FILE *settings = fopen(SETTINGS_PATH, "rb");
     int settings_error = settings ? 0 : errno;
-    DiagnosticLevel requested = settings ? diagnostics_read_settings(settings) : DIAGNOSTICS_INFO;
+    bool valid = diagnostics_parse_settings(settings, &game_settings);
     if (settings)
         fclose(settings);
-    diagnostic_threshold = requested == DIAGNOSTICS_INVALID ? DIAGNOSTICS_INFO : requested;
+    diagnostic_threshold = game_settings.level;
 
-    const char *log_mode = "w";
-    FILE *previous_run = fopen(LOG_PATH, "rb");
-    if (previous_run)
+    u64 timestamp = 0;
+    TimeCalendarTime calendar;
+    TimeCalendarAdditionalInfo calendar_info;
+    char suffix[48];
+    bool clock_available = R_SUCCEEDED(timeGetCurrentTime(TimeType_Default, &timestamp)) &&
+                           R_SUCCEEDED(timeToCalendarTimeWithMyRule(timestamp, &calendar, &calendar_info));
+    if (clock_available)
+        snprintf(suffix, sizeof(suffix), "%04u-%02u-%02u_%02u-%02u-%02u", (unsigned)calendar.year,
+                 (unsigned)calendar.month, (unsigned)calendar.day, (unsigned)calendar.hour,
+                 (unsigned)calendar.minute, (unsigned)calendar.second);
+    else
+        snprintf(suffix, sizeof(suffix), "clock-unavailable_%llu", (unsigned long long)armGetSystemTick());
+    for (unsigned attempt = 0; attempt < 100; ++attempt)
     {
-        fclose(previous_run);
-        if ((remove(PREVIOUS_LOG_PATH) != 0 && errno != ENOENT) || rename(LOG_PATH, PREVIOUS_LOG_PATH) != 0)
-            log_mode = "a";
+        if (attempt == 0)
+            snprintf(diagnostic_path, sizeof(diagnostic_path), GAME_DIR "/DemolitionRacer_%s.log", suffix);
+        else
+            snprintf(diagnostic_path, sizeof(diagnostic_path), GAME_DIR "/DemolitionRacer_%s_%02u.log", suffix, attempt);
+        // Keep past sessions even when two launches have the same wall-clock second.
+        struct stat existing;
+        if (stat(diagnostic_path, &existing) == 0)
+            continue;
+        if (errno != ENOENT)
+            break;
+        int descriptor = open(diagnostic_path, O_WRONLY | O_CREAT | O_EXCL, 0666);
+        if (descriptor < 0 && errno == EEXIST)
+            continue;
+        if (descriptor >= 0)
+        {
+            diagnostic_log = fdopen(descriptor, "w");
+            if (!diagnostic_log) close(descriptor);
+        }
+        break;
     }
-    else if (errno != ENOENT)
-        log_mode = "a";
-    diagnostic_log = fopen(LOG_PATH, log_mode);
     if (!diagnostic_log)
-        fprintf(stderr, "Could not open %s (errno=%d)\n", LOG_PATH, errno);
-    switch_log(DIAGNOSTICS_INFO, "Demolition Racer Switch " DRACER_VERSION " starting; LOG=%s; applet type=%d",
-               diagnostics_level_name(diagnostic_threshold), (int)appletGetAppletType());
-    if (requested == DIAGNOSTICS_INVALID)
-        switch_log(DIAGNOSTICS_ERROR, "Invalid LOG in settings.yaml; using INFO");
+        fprintf(stderr, "Could not open %s (errno=%d)\n", diagnostic_path, errno);
+    switch_log(DIAGNOSTICS_INFO, "Demolition Racer Switch " DRACER_VERSION " starting; LOG=%s FPS_OVERLAY=%s UPSCALE=%u (0=FIT) applet=%d docked=%d",
+               diagnostics_level_name(diagnostic_threshold), game_settings.fps_overlay ? "true" : "false",
+               game_settings.upscale, (int)appletGetAppletType(), appletGetOperationMode() == AppletOperationMode_Console);
+    if (!valid)
+        switch_log(DIAGNOSTICS_ERROR, "Invalid settings.yaml; using LOG=INFO FPS_OVERLAY=false UPSCALE=FIT");
     else if (settings_error && settings_error != ENOENT)
         switch_log(DIAGNOSTICS_ERROR, "Could not read settings.yaml (errno=%d); using INFO", settings_error);
 }
@@ -105,6 +136,18 @@ static void pump_applet(void)
     {
         quitting = 1;
         switch_log(DIAGNOSTICS_INFO, "Homebrew exit requested");
+    }
+    static uint64 next_exit_poll;
+    if (!quitting && exit_pad_ready && xport_timer_get() >= next_exit_poll)
+    {
+        next_exit_poll = xport_timer_get() + 2000;
+        const u64 exit_buttons = HidNpadButton_Plus | HidNpadButton_Minus | HidNpadButton_ZL | HidNpadButton_ZR;
+        padUpdate(&exit_pad);
+        if ((padGetButtons(&exit_pad) & exit_buttons) == exit_buttons)
+        {
+            quitting = 1;
+            switch_log(DIAGNOSTICS_INFO, "Exit chord pressed: Plus + Minus + ZL + ZR");
+        }
     }
     // Native game loops don't all check the result of xport_poll().
     if (quitting && game_running)
@@ -202,6 +245,8 @@ sint32 xport_input_init(void)
     if (!input_ready)
         padConfigureInput(PAD_COUNT, HidNpadStyleSet_NpadFullCtrl);
     padInitializeDefault(&pads[0].input);
+    padInitializeDefault(&exit_pad);
+    exit_pad_ready = true;
     for (unsigned i = 0; i < PAD_COUNT; ++i)
         memset(pads[i].axes, 128, sizeof(pads[i].axes));
     input_ready = true;
@@ -341,8 +386,21 @@ sint32 xport_window_init(void)
     Result result = nwindowGetDimensions(window, &window_width, &window_height);
     switch_log(DIAGNOSTICS_DEBUG, "Video native window before setup: %ux%u, result=0x%08x",
                (unsigned)window_width, (unsigned)window_height, (unsigned)result);
-    result = framebufferCreate(&switch_framebuffer, window, DISPLAY_WIDTH, DISPLAY_HEIGHT,
+    // Only x4 needs the extra docked pixels; retain the established 720p path otherwise.
+    if (game_settings.upscale == 4 && appletGetOperationMode() == AppletOperationMode_Console)
+    {
+        display_width = 1920;
+        display_height = 1080;
+    }
+    result = framebufferCreate(&switch_framebuffer, window, display_width, display_height,
                                PIXEL_FORMAT_BGRA_8888, 2);
+    if (R_FAILED(result) && display_height == 1080)
+    {
+        switch_log(DIAGNOSTICS_INFO, "Video 1080p setup declined (0x%08x); falling back to 720p", (unsigned)result);
+        display_width = 1280;
+        display_height = 720;
+        result = framebufferCreate(&switch_framebuffer, window, display_width, display_height, PIXEL_FORMAT_BGRA_8888, 2);
+    }
     if (R_FAILED(result))
     {
         switch_log(DIAGNOSTICS_ERROR, "Video framebufferCreate failed: 0x%08x", (unsigned)result);
@@ -356,8 +414,10 @@ sint32 xport_window_init(void)
         return 0;
     }
     video_initialized = true;
-    switch_log(DIAGNOSTICS_INFO, "Video: native libnx framebuffer %dx%d BGRA8888, active 960x720 (4:3), stride=%u bytes",
-               DISPLAY_WIDTH, DISPLAY_HEIGHT, (unsigned)switch_framebuffer.stride);
+    FramebufferViewport viewport = framebuffer_viewport(display_width, display_height, game_settings.upscale);
+    switch_log(DIAGNOSTICS_INFO, "Video: libnx framebuffer %dx%d BGRA8888, active %dx%d at %d,%d, stride=%u bytes",
+               display_width, display_height, (int)viewport.width, (int)viewport.height,
+               (int)viewport.x, (int)viewport.y, (unsigned)switch_framebuffer.stride);
     return video_initialized;
 }
 
@@ -373,14 +433,20 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
         ++failed_frames;
         return 0;
     }
+    static uint64 window_start, frame_start_count, max_submit_us, last_submit_us;
+    static unsigned submission_fps;
+    uint64 submit_start_us = xport_timer_get();
     u32 stride_bytes = 0;
     uint32_t *destination = framebufferBegin(&switch_framebuffer, &stride_bytes);
     uint32_t visible_colors = 0;
     const FramebufferSource crop = {source_x, source_y, source_width, source_height};
     bool copied = stride_bytes % sizeof(*destination) == 0 &&
-                  framebuffer_blit_4_3(destination, stride_bytes / sizeof(*destination),
-                                       DISPLAY_WIDTH, DISPLAY_HEIGHT, pixels, bitmap_width,
-                                       bitmap_height, crop, &visible_colors);
+                  framebuffer_blit_scaled(destination, stride_bytes / sizeof(*destination),
+                                          display_width, display_height, pixels, bitmap_width,
+                                          bitmap_height, crop, game_settings.upscale, &visible_colors);
+    if (copied && game_settings.fps_overlay)
+        framebuffer_draw_fps(destination, stride_bytes / sizeof(*destination),
+                             display_width, display_height, submission_fps);
     if (destination)
         framebufferEnd(&switch_framebuffer);
     if (!copied)
@@ -398,19 +464,37 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
     static bool previous_nonblack;
     bool nonblack = visible_colors != 0;
     ++presented_frames;
+    uint64 submitted_us = xport_timer_get();
+    last_submit_us = submitted_us - submit_start_us;
+    if (last_submit_us > max_submit_us)
+        max_submit_us = last_submit_us;
+    if (!window_start)
+    {
+        window_start = submitted_us;
+        frame_start_count = presented_frames;
+    }
+    uint64 window_elapsed = submitted_us - window_start;
+    if (window_elapsed >= 1000000)
+    {
+        submission_fps = (unsigned)((1000000 * (presented_frames - frame_start_count) + window_elapsed / 2) / window_elapsed);
+        window_start = submitted_us;
+        frame_start_count = presented_frames;
+    }
     if (nonblack)
         ++nonblack_frames;
-    if (presented_frames <= 8 || presented_frames % 180 == 0 ||
+    if (presented_frames <= 8 || presented_frames % 120 == 0 ||
         bitmap_width != previous_width || bitmap_height != previous_height ||
         source_x != previous_crop.x || source_y != previous_crop.y ||
         source_width != previous_crop.width || source_height != previous_crop.height ||
         nonblack != previous_nonblack)
         switch_log(DIAGNOSTICS_DEBUG,
-                   "Video t=%llu ms frame=%llu source=%dx%d crop=%d,%d %dx%d rgb-or=%06x nonblack=%llu failures=%llu",
-                   (unsigned long long)(xport_timer_get() / 1000u), (unsigned long long)presented_frames,
+                   "Video frame=%llu source=%dx%d crop=%d,%d %dx%d rgb-or=%06x nonblack=%llu failures=%llu output-fps=%u submit-us=%llu max-submit-us=%llu audio-buffers=%u audio-overruns=%u",
+                   (unsigned long long)presented_frames,
                    (int)bitmap_width, (int)bitmap_height, (int)source_x, (int)source_y,
                    (int)source_width, (int)source_height, (unsigned)visible_colors,
-                   (unsigned long long)nonblack_frames, (unsigned long long)failed_frames);
+                   (unsigned long long)nonblack_frames, (unsigned long long)failed_frames,
+                   submission_fps, (unsigned long long)last_submit_us, (unsigned long long)max_submit_us,
+                   (unsigned)g_xport_audio_submitted_buffers, (unsigned)g_xport_audio_callback_overruns);
     previous_width = bitmap_width;
     previous_height = bitmap_height;
     previous_crop = crop;
@@ -647,13 +731,41 @@ sint32 xport_file_read(const char *path, void *data, size_t capacity, size_t *si
     return fclose(file) == 0 && !failed;
 }
 
+static void prepare_save_directory(void)
+{
+    if (mkdir(SAVE_DIRECTORY, 0777) != 0)
+    {
+        int directory_error = errno;
+        struct stat directory;
+        if (directory_error != EEXIST || stat(SAVE_DIRECTORY, &directory) != 0 || !S_ISDIR(directory.st_mode))
+        {
+            switch_log(DIAGNOSTICS_ERROR, "Save directory unavailable: %s (errno=%d)", SAVE_DIRECTORY, directory_error);
+            return;
+        }
+    }
+    switch_log(DIAGNOSTICS_DEBUG, "Save directory ready: %s", SAVE_DIRECTORY);
+    struct stat existing;
+    if (stat(SAVE_FILE, &existing) == 0 || errno != ENOENT ||
+        stat(SAVE_BACKUP, &existing) == 0 || errno != ENOENT)
+        return;
+    if (rename(LEGACY_SAVE, SAVE_FILE) == 0)
+        switch_log(DIAGNOSTICS_INFO, "Moved existing save into %s", SAVE_FILE);
+    else if (errno != ENOENT)
+        switch_log(DIAGNOSTICS_ERROR, "Legacy save migration failed (errno=%d); leaving the original in place", errno);
+    else if (rename(LEGACY_SAVE ".bak", SAVE_BACKUP) == 0)
+        switch_log(DIAGNOSTICS_INFO, "Moved existing save backup into %s", SAVE_BACKUP);
+}
+
 sint32 xport_save(const void *data, sint32 size)
 {
     if (!data || size <= 0)
         return -1;
     FILE *file = fopen(SAVE_TEMP, "wb");
     if (!file)
+    {
+        switch_log(DIAGNOSTICS_ERROR, "Could not open save staging file %s (errno=%d)", SAVE_TEMP, errno);
         return -1;
+    }
     bool written = fwrite(data, 1, (size_t)size, file) == (size_t)size &&
                    fflush(file) == 0 && fsync(fileno(file)) == 0;
     if (fclose(file) != 0 || !written)
@@ -675,9 +787,11 @@ sint32 xport_save(const void *data, sint32 size)
     if (rename(SAVE_TEMP, SAVE_FILE) != 0)
         goto fail;
     remove(SAVE_BACKUP);
+    switch_log(DIAGNOSTICS_DEBUG, "Saved %d bytes to %s", (int)size, SAVE_FILE);
     return 1;
 
 fail:
+    switch_log(DIAGNOSTICS_ERROR, "Save write or replacement failed for %s (errno=%d)", SAVE_FILE, errno);
     remove(SAVE_TEMP);
     return -1;
 }
@@ -686,15 +800,30 @@ sint32 xport_load(void *data, sint32 capacity)
 {
     if (!data || capacity <= 0)
         return -1;
-    FILE *file = fopen(SAVE_FILE, "rb");
-    if (!file && errno == ENOENT)
-        file = fopen(SAVE_BACKUP, "rb");
+    const char *paths[] = {SAVE_FILE, SAVE_BACKUP, LEGACY_SAVE, LEGACY_SAVE ".bak"};
+    FILE *file = NULL;
+    const char *path = SAVE_FILE;
+    for (unsigned index = 0; index < sizeof(paths) / sizeof(*paths); ++index)
+    {
+        path = paths[index];
+        file = fopen(path, "rb");
+        if (file || errno != ENOENT)
+            break;
+    }
     if (!file)
-        return errno == ENOENT ? 0 : -1;
+    {
+        int load_error = errno;
+        switch_log(load_error == ENOENT ? DIAGNOSTICS_DEBUG : DIAGNOSTICS_ERROR,
+                   "Save load: %s (errno=%d)", load_error == ENOENT ? "no save found" : path, load_error);
+        return load_error == ENOENT ? 0 : -1;
+    }
     long length = stream_length(file);
     bool read = length > 0 && length <= capacity && fseek(file, 0, SEEK_SET) == 0 &&
                 fread(data, 1, (size_t)length, file) == (size_t)length;
-    return fclose(file) == 0 && read ? (sint32)length : -1;
+    bool loaded = fclose(file) == 0 && read;
+    switch_log(loaded ? DIAGNOSTICS_DEBUG : DIAGNOSTICS_ERROR, "Save load: %s size=%ld capacity=%d status=%s",
+               path, length, (int)capacity, loaded ? "ok" : "failed");
+    return loaded ? (sint32)length : -1;
 }
 
 sint32 xport_memory_readable(const void *address, size_t size)
@@ -756,6 +885,7 @@ int main(void)
         close_diagnostics();
         return 2;
     }
+    prepare_save_directory();
     const bool exit_locked = R_SUCCEEDED(appletLockExit());
     switch_log(DIAGNOSTICS_DEBUG, "Applet exit lock: %s", exit_locked ? "acquired" : "unavailable");
     xport_memory_init(DRAM, sizeof(DRAM), (uint8 *)SCRATCHPAD, sizeof(SCRATCHPAD), NULL, 0u);

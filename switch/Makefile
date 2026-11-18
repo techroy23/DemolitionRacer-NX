@@ -24,7 +24,7 @@ XPORT ?= ../.deps/xport
 RUNTIME := $(XPORT)/src
 BUILD := build
 NAME := DemolitionRacer
-VERSION := 0.1.2
+VERSION := 0.1.3
 BINARY := $(BUILD)/$(NAME)
 BUILD_MAKEFILE := $(firstword $(MAKEFILE_LIST))
 

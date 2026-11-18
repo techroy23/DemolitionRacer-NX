@@ -12,6 +12,15 @@ static FILE *stream_with(const char *text)
 
 int main(void)
 {
+    FILE *options = stream_with("LOG: DEBUG\nFPS_OVERLAY: true\nUPSCALE: x4\n");
+    DiagnosticSettings config;
+    assert(diagnostics_parse_settings(options, &config));
+    assert(config.level == DIAGNOSTICS_DEBUG && config.fps_overlay && config.upscale == 4);
+    fclose(options);
+    options = stream_with("FPS_OVERLAY: false\nUPSCALE: x7\n");
+    assert(!diagnostics_parse_settings(options, &config));
+    assert(!config.fps_overlay && config.upscale == 0);
+    fclose(options);
     FILE *settings = stream_with("# Local settings\r\nLOG: DEBUG # verbose\r\n");
     assert(diagnostics_read_settings(settings) == DIAGNOSTICS_DEBUG);
     fclose(settings);

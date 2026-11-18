@@ -20,55 +20,81 @@ const char *diagnostics_level_name(DiagnosticLevel level)
     }
 }
 
-DiagnosticLevel diagnostics_read_settings(FILE *settings)
+bool diagnostics_parse_settings(FILE *settings, DiagnosticSettings *configuration)
 {
-    // Only the top-level LOG scalar is supported. The game's original options
-    // and memory card settings remain under the in-game UI's control.
-    DiagnosticLevel level = DIAGNOSTICS_INFO;
-    bool first_line = true, defined = false;
+    *configuration = (DiagnosticSettings){DIAGNOSTICS_INFO, false, 0};
+    DiagnosticSettings parsed = *configuration;
+    if (!settings)
+        return true;
+    const char *keys[] = {"LOG", "FPS_OVERLAY", "UPSCALE"};
+    unsigned defined = 0;
+    bool first_line = true;
     char line[256];
     while (fgets(line, sizeof(line), settings))
     {
         if (!strchr(line, '\n') && !feof(settings))
-            return DIAGNOSTICS_INVALID;
+            return false;
         char *key = line;
         if (first_line && strncmp(key, "\xef\xbb\xbf", 3) == 0)
             key += 3;
         first_line = false;
-        if (strncmp(key, "LOG", 3) != 0 || (key[3] != ':' && !isspace((unsigned char)key[3])))
+        unsigned field;
+        for (field = 0; field < sizeof(keys) / sizeof(*keys); ++field)
+        {
+            size_t length = strlen(keys[field]);
+            if (strncmp(key, keys[field], length) == 0 &&
+                (key[length] == ':' || !key[length] || isspace((unsigned char)key[length])))
+                break;
+        }
+        if (field == sizeof(keys) / sizeof(*keys))
             continue;
-        char *separator = skip_spaces(key + 3);
-        if (*separator != ':' || !isspace((unsigned char)separator[1]) || defined)
-            return DIAGNOSTICS_INVALID;
+        char *separator = skip_spaces(key + strlen(keys[field]));
+        if (*separator != ':' || !isspace((unsigned char)separator[1]) || (defined & (1u << field)))
+            return false;
         char *value = skip_spaces(separator + 1);
         char quote = (*value == '\'' || *value == '"') ? *value++ : '\0';
         char *end = value;
         while (*end && (quote ? *end != quote : !isspace((unsigned char)*end)))
             ++end;
-        char *tail = end;
-        if (quote)
-        {
-            if (*tail != quote)
-                return DIAGNOSTICS_INVALID;
-            ++tail;
-        }
+        if (quote && *end != quote)
+            return false;
+        char *tail = end + (quote != '\0');
         if (*tail && !isspace((unsigned char)*tail))
-            return DIAGNOSTICS_INVALID;
+            return false;
         tail = skip_spaces(tail);
         if (*tail && *tail != '#')
-            return DIAGNOSTICS_INVALID;
+            return false;
         *end = '\0';
-        if (strcmp(value, "DEBUG") == 0)
-            level = DIAGNOSTICS_DEBUG;
-        else if (strcmp(value, "INFO") == 0)
-            level = DIAGNOSTICS_INFO;
-        else if (strcmp(value, "ERROR") == 0)
-            level = DIAGNOSTICS_ERROR;
-        else
-            return DIAGNOSTICS_INVALID;
-        defined = true;
+        switch (field)
+        {
+            case 0:
+                if (!strcmp(value, "DEBUG")) parsed.level = DIAGNOSTICS_DEBUG;
+                else if (!strcmp(value, "INFO")) parsed.level = DIAGNOSTICS_INFO;
+                else if (!strcmp(value, "ERROR")) parsed.level = DIAGNOSTICS_ERROR;
+                else return false;
+                break;
+            case 1:
+                if (!strcmp(value, "true")) parsed.fps_overlay = true;
+                else if (strcmp(value, "false")) return false;
+                break;
+            case 2:
+                if (!strcmp(value, "FIT")) break;
+                if (strlen(value) != 2 || value[0] != 'x' || value[1] < '2' || value[1] > '4') return false;
+                parsed.upscale = (unsigned)(value[1] - '0');
+                break;
+        }
+        defined |= 1u << field;
     }
-    return ferror(settings) ? DIAGNOSTICS_INVALID : level;
+    if (ferror(settings))
+        return false;
+    *configuration = parsed;
+    return true;
+}
+
+DiagnosticLevel diagnostics_read_settings(FILE *settings)
+{
+    DiagnosticSettings configuration;
+    return diagnostics_parse_settings(settings, &configuration) ? configuration.level : DIAGNOSTICS_INVALID;
 }
 
 bool diagnostics_vwrite(FILE *log, DiagnosticLevel threshold, DiagnosticLevel level,

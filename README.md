@@ -2,7 +2,7 @@
 
 A native homebrew port of `SLUS-00969`, the US PlayStation release, for the first-generation Switch OLED. The project builds the reconstructed game as AArch64 code and reads original artwork, tracks, and audio from a local asset pack. No emulator frontend or retail BIOS is used. See [PLAN.MD](PLAN.MD) for parity milestones and what has been verified.
 
-**Status: 0.1.2 is ready for an OLED retest.** The 0.1.1 hardware test reached movie and menu audio but showed a black screen. This build uses direct framebuffer output and enables one controller only. Use the original single-player mode; its menus and artwork are unchanged.
+**Status: 0.1.3 is ready for testing.** The 0.1.2 hardware log shows movie, menu, race, and results assets loading with no framebuffer submission failures. The new controls, save migration, and display settings still need OLED verification. Use single-player mode; original menus and artwork are unchanged.
 
 ## Prepare your game data
 
@@ -43,9 +43,21 @@ Start the NRO from the Homebrew Menu. For initial testing, use the full-memory H
 
 ## Settings and hardware logs
 
-`settings.yaml` is read at launch. `LOG: DEBUG` records startup, framebuffer setup, early frames, source-size and blank/nonblank changes, periodic heartbeats, assets opened, and errors. `rgb-or=000000` means all copied RGB pixels were black. Successful submission alone does not prove the display showed the frame. `INFO` keeps major events and errors; `ERROR` keeps errors only. A missing file or invalid `LOG` falls back to `INFO`. No original in-game options are changed.
+`settings.yaml` is read at launch. These are the packaged defaults:
 
-If something goes wrong, send `sdmc:/switch/DemolitionRacer/DemolitionRacer.log` and tell us the last screen you saw and what you pressed. Copy it before relaunching if you can. The next launch normally moves it to `DemolitionRacer.previous.log`. Logging starts after the NRO reaches its entry point, and is not a crash dump; a failure before then may require a photo or the system error code.
+```yaml
+LOG: DEBUG
+FPS_OVERLAY: false
+UPSCALE: FIT
+```
+
+- Hold **+ (Start) + − (Select) + ZL (L2) + ZR (R2)** together to exit to the Homebrew Menu. This does not force a game save.
+- `FPS_OVERLAY: true` shows the Switch framebuffer submission rate, not the number of distinct PS1 frames or the panel refresh rate. The default keeps the original picture free of overlays.
+- `UPSCALE` uses nearest-neighbor output scaling from a 320×240 reference with the original 4:3 shape. `x2` targets 640×480, `x3` targets 960×720, and `x4` targets 1280×960 when launched docked with 1080p framebuffer support. `x4` is capped at 960×720 on the 720p path. `FIT` keeps the existing fit-to-screen behavior. This does not rerender geometry or add detail to the source pixels.
+- On launch the NRO creates `SAVE/`. It moves an existing `DemolitionRacer.sav` there if no save or recovery backup exists there already. Existing saves in `SAVE/` take priority.
+- Each launch creates a separate `DemolitionRacer_YYYY-MM-DD_HH-MM-SS.log` next to the NRO, using the console's local time. `DEBUG` adds elapsed timestamps, frame submission timings, audio counters, file opens, and save events. `INFO` keeps major events and errors; `ERROR` keeps errors only. Missing or invalid settings use `INFO`, overlay off, and `FIT`.
+
+If something goes wrong, send the log for that launch and tell us the last screen you saw and what you pressed. The log captures application diagnostics, not a system crash dump.
 
 ## Source provenance
 
