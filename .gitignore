@@ -1,0 +1,17 @@
+# Original discs, extracted assets, and locally generated media
+/DATA/
+/DISC/
+/pack/
+/evidence/local/
+
+# Build and local tooling outputs
+/switch/build/
+/_build/
+**/__pycache__/
+*.nro
+*.elf
+*.nacp
+*.map
+*.suo
+*.user
+/.vs/
