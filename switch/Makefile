@@ -25,7 +25,7 @@ XPORT ?= $(GAME)/xport
 RUNTIME := $(XPORT)/src
 BUILD := build
 NAME := DemolitionRacer
-VERSION := 0.1.5
+VERSION := 0.2.0
 PYTHON ?= python
 BINARY := $(BUILD)/$(NAME)
 BUILD_MAKEFILE := $(firstword $(MAKEFILE_LIST))
@@ -113,7 +113,7 @@ $(BINARY).elf: $(OBJS) $(BUILD_MAKEFILE)
 
 $(BINARY).nacp: $(BUILD_MAKEFILE)
 	@mkdir -p "$(@D)"
-	"$(TOOLBIN)/nacptool" --create "Demolition Racer" "Demolition Racer xport contributors" "$(VERSION)" "$@"
+	"$(TOOLBIN)/nacptool" --create "Demolition Racer" "An2Kin" "$(VERSION)" "$@"
 
 $(BINARY).nro: $(BINARY).elf $(BINARY).nacp $(BUILD)/game_icon.jpg
 	"$(TOOLBIN)/elf2nro" "$<" "$@" --nacp="$(BINARY).nacp" --icon="$(BUILD)/game_icon.jpg"
