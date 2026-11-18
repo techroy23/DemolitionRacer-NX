@@ -34,6 +34,8 @@ static DiagnosticSettings game_settings;
 static char diagnostic_path[160];
 static PadState exit_pad;
 static bool exit_pad_ready;
+static uint64 collision_response_total, collision_response_peak;
+static unsigned collision_response_count;
 
 static void switch_log(DiagnosticLevel level, const char *format, ...) DIAGNOSTICS_FORMAT(2, 3);
 
@@ -115,6 +117,16 @@ static void start_diagnostics(void)
         switch_log(DIAGNOSTICS_ERROR, "Could not read settings.yaml (errno=%d); using INFO", settings_error);
 }
 
+void switch_record_collision_response(uint64 duration_microseconds)
+{
+    if (diagnostic_threshold != DIAGNOSTICS_DEBUG || !diagnostic_log)
+        return;
+    ++collision_response_count;
+    collision_response_total += duration_microseconds;
+    if (duration_microseconds > collision_response_peak)
+        collision_response_peak = duration_microseconds;
+}
+
 void switch_record_race_profile(uint64 update_us, uint64 scene_us, uint64 wait_us)
 {
     if (diagnostic_threshold != DIAGNOSTICS_DEBUG || !diagnostic_log)
@@ -136,6 +148,11 @@ void switch_record_race_profile(uint64 update_us, uint64 scene_us, uint64 wait_u
         switch_log(DIAGNOSTICS_DEBUG, "Race profile iterations=%u window-us=%llu update-avg-us=%llu scene-avg-us=%llu pacing-avg-us=%llu measured-peak-us=%llu",
                    frames, (unsigned long long)(now - window_start), (unsigned long long)(update_total / frames),
                    (unsigned long long)(scene_total / frames), (unsigned long long)(wait_total / frames), (unsigned long long)peak);
+        switch_log(DIAGNOSTICS_DEBUG, "Collision profile contacts=%u response-total-us=%llu response-max-us=%llu",
+                   collision_response_count, (unsigned long long)collision_response_total,
+                   (unsigned long long)collision_response_peak);
+        collision_response_count = 0;
+        collision_response_total = collision_response_peak = 0;
         frames = 0;
         update_total = scene_total = wait_total = peak = 0;
     }
@@ -418,8 +435,16 @@ sint32 xport_window_init(void)
         display_width = 1920;
         display_height = 1080;
     }
+    unsigned buffer_count = 3;
     result = framebufferCreate(&switch_framebuffer, window, display_width, display_height,
-                               PIXEL_FORMAT_BGRA_8888, 2);
+                               PIXEL_FORMAT_BGRA_8888, buffer_count);
+    if (R_FAILED(result))
+    {
+        switch_log(DIAGNOSTICS_INFO, "Video triple buffer unavailable (0x%08x); retrying with two", (unsigned)result);
+        buffer_count = 2;
+        result = framebufferCreate(&switch_framebuffer, window, display_width, display_height,
+                                   PIXEL_FORMAT_BGRA_8888, buffer_count);
+    }
     if (R_FAILED(result) && display_height == 1080)
     {
         switch_log(DIAGNOSTICS_INFO, "Video 1080p setup declined (0x%08x); falling back to 720p", (unsigned)result);
@@ -441,9 +466,9 @@ sint32 xport_window_init(void)
     }
     video_initialized = true;
     FramebufferViewport viewport = framebuffer_viewport(display_width, display_height, game_settings.upscale);
-    switch_log(DIAGNOSTICS_INFO, "Video: libnx framebuffer %dx%d BGRA8888, active %dx%d at %d,%d, stride=%u bytes",
+    switch_log(DIAGNOSTICS_INFO, "Video: libnx framebuffer %dx%d BGRA8888, active %dx%d at %d,%d, stride=%u bytes, buffers=%u",
                display_width, display_height, (int)viewport.width, (int)viewport.height,
-               (int)viewport.x, (int)viewport.y, (unsigned)switch_framebuffer.stride);
+               (int)viewport.x, (int)viewport.y, (unsigned)switch_framebuffer.stride, buffer_count);
     return video_initialized;
 }
 
@@ -460,8 +485,8 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
         return 0;
     }
     static uint64 window_start, frame_start_count, max_submit_us, last_submit_us;
-    static uint64 dequeue_total, scale_total, queue_total;
-    static unsigned profiled_submissions;
+    static uint64 dequeue_total, scale_total, queue_total, previous_submission_time, longest_submission_gap;
+    static unsigned profiled_submissions, gaps_over_25ms, gaps_over_34ms;
     static unsigned submission_fps;
     uint64 submit_start_us = xport_timer_get();
     u32 stride_bytes = 0;
@@ -495,17 +520,28 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
     bool nonblack = visible_colors != 0;
     ++presented_frames;
     uint64 submitted_us = xport_timer_get();
+    if (previous_submission_time)
+    {
+        uint64 gap = submitted_us - previous_submission_time;
+        if (gap > longest_submission_gap) longest_submission_gap = gap;
+        if (gap > 25000) ++gaps_over_25ms;
+        if (gap > 34000) ++gaps_over_34ms;
+    }
+    previous_submission_time = submitted_us;
     dequeue_total += dequeue_done - submit_start_us;
     scale_total += scale_done - dequeue_done;
     queue_total += submitted_us - scale_done;
     ++profiled_submissions;
     if (profiled_submissions == 120)
     {
-        switch_log(DIAGNOSTICS_DEBUG, "Present profile frames=%u dequeue-avg-us=%llu scale-avg-us=%llu queue-avg-us=%llu",
+        switch_log(DIAGNOSTICS_DEBUG, "Present profile frames=%u dequeue-avg-us=%llu scale-avg-us=%llu queue-avg-us=%llu max-gap-us=%llu gaps-over-25ms=%u gaps-over-34ms=%u",
                    profiled_submissions, (unsigned long long)(dequeue_total / profiled_submissions),
-                   (unsigned long long)(scale_total / profiled_submissions), (unsigned long long)(queue_total / profiled_submissions));
+                   (unsigned long long)(scale_total / profiled_submissions), (unsigned long long)(queue_total / profiled_submissions),
+                   (unsigned long long)longest_submission_gap, gaps_over_25ms, gaps_over_34ms);
         profiled_submissions = 0;
         dequeue_total = scale_total = queue_total = 0;
+        longest_submission_gap = 0;
+        gaps_over_25ms = gaps_over_34ms = 0;
     }
     last_submit_us = submitted_us - submit_start_us;
     if (last_submit_us > max_submit_us)
@@ -919,7 +955,7 @@ void xport_shutdown(void)
 
 static void show_startup_splash(void)
 {
-    extern const uint32_t dracer_splash_pixels[640 * 480];
+    extern const uint32_t dracer_splash_pixels[1280 * 720];
     if (!xport_window_init())
         return;
     u32 stride_bytes = 0;
@@ -929,9 +965,21 @@ static void show_startup_splash(void)
         switch_log(DIAGNOSTICS_ERROR, "Could not dequeue the launcher splash framebuffer");
         return;
     }
-    bool copied = stride_bytes % sizeof(*destination) == 0 &&
-                  framebuffer_blit_4_3(destination, stride_bytes / sizeof(*destination), display_width, display_height,
-                                       dracer_splash_pixels, 640, 480, (FramebufferSource){0, 0, 640, 480}, NULL);
+    bool copied = stride_bytes % sizeof(*destination) == 0 && stride_bytes >= (size_t)display_width * sizeof(*destination);
+    if (copied)
+    {
+        size_t stride_pixels = stride_bytes / sizeof(*destination);
+        for (int row = 0; row < display_height; ++row)
+        {
+            uint32_t *output_row = destination + (size_t)row * stride_pixels;
+            const uint32_t *input_row = dracer_splash_pixels + (row * 720 / display_height) * 1280;
+            if (display_width == 1280)
+                memcpy(output_row, input_row, 1280 * sizeof(*destination));
+            else
+                for (int column = 0; column < display_width; ++column)
+                    output_row[column] = input_row[column * 1280 / display_width];
+        }
+    }
     framebufferEnd(&switch_framebuffer);
     if (!copied)
     {

@@ -638,6 +638,10 @@ void game_800946D4(uint32 first, uint32 second)
     mask = physics_collision_geometry(states[0], states[1], positions, angles, contacts);
     if (!mask)
         return;
+#if defined(AP_SWITCH)
+    extern void switch_record_collision_response(uint64 duration_microseconds);
+    uint64 response_start = xport_timer_get();
+#endif
     for (side = 0; side < 2; ++side)
     {
         delta[side][0] = physics_multiply_divide((sint32)r_u32(states[side] + 112u) / 2, (sint32)r_u32(0x800651C4u), 256);
@@ -681,6 +685,9 @@ void game_800946D4(uint32 first, uint32 second)
         }
         side = selected / 4u;
         physics_collision_response(states[side], states[1u - side], &contacts[selected], angles[side] >> 8, fraction, selected & 3u);
+#if defined(AP_SWITCH)
+        switch_record_collision_response(xport_timer_get() - response_start);
+#endif
         return;
     }
     {
@@ -696,4 +703,7 @@ void game_800946D4(uint32 first, uint32 second)
             side = iteration / 4u;
             physics_collision_response(states[side], states[1u - side], &contacts[iteration], angles[side] >> 8, fraction, 256u);
         }
+#if defined(AP_SWITCH)
+    switch_record_collision_response(xport_timer_get() - response_start);
+#endif
 }

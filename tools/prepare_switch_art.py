@@ -13,7 +13,7 @@ def prepare(icon_path, splash_path, output):
         icon = ImageOps.fit(source.convert('RGB'), (256, 256), Image.Resampling.LANCZOS, centering=(0.5, 0.0))
         icon.save(output / 'game_icon.jpg', quality=90, optimize=True)
     with Image.open(splash_path) as source:
-        canvas = Image.new('RGBA', (640, 480), (0, 0, 0, 255))
+        canvas = Image.new('RGBA', (1280, 720), (0, 0, 0, 255))
         splash = ImageOps.contain(source.convert('RGB'), canvas.size, Image.Resampling.LANCZOS)
         canvas.paste(splash, ((canvas.width - splash.width) // 2, (canvas.height - splash.height) // 2))
         (output / 'game_splash.bgra').write_bytes(canvas.tobytes('raw', 'BGRA'))

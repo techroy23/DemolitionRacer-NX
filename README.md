@@ -2,7 +2,7 @@
 
 A native homebrew port of `SLUS-00969`, the US PlayStation release, for the first-generation Switch OLED. The project builds the reconstructed game as AArch64 code and reads original artwork, tracks, and audio from a local asset pack. No emulator frontend or retail BIOS is used. See [PLAN.MD](PLAN.MD) for parity milestones and what has been verified.
 
-**Status: 0.1.4 is ready for testing.** The 0.1.3 hardware run confirmed clean exit and no submission failures. The race still stuttered. This build adds timing breakdowns and a faster 3× output path without changing the original race timing.
+**Status: 0.1.5 is ready for testing.** It tries three display buffers to reduce time spent waiting for one to become available, falling back to two if allocation fails. It also adds collision response timing and missed-submission-gap counters. Original race timing, collision logic, and game artwork are unchanged.
 
 ## Prepare your game data
 
@@ -17,7 +17,7 @@ The tool checks the exact supported disc SHA-256 and makes `pack/DATA/` without 
 
 ## Build
 
-Install the Switch development packages following [devkitPro's Windows setup](https://devkitpro.org/wiki/Getting_Started). The build needs devkitA64, libnx, Switch packaging tools, and Python with Pillow (`python -m pip install Pillow`). The two `game_*.png` files are launcher artwork; the NRO embeds a square Homebrew Menu icon and shows the splash for about five seconds before the original intro. The original movies and game assets remain on the SD card. Invoke `make` from the devkitPro MSYS shell with its normal SDK environment. Run from the project root:
+Install the Switch development packages following [devkitPro's Windows setup](https://devkitpro.org/wiki/Getting_Started). The build needs devkitA64, libnx, Switch packaging tools, and Python with Pillow (`python -m pip install Pillow`). The two `game_*.png` files are launcher artwork; the NRO embeds a square Homebrew Menu icon and shows the splash for about five seconds before the original intro. The splash fills the available width, with top and bottom bars so no artwork is cropped or stretched. The original movies and game assets remain on the SD card. Invoke `make` from the devkitPro MSYS shell with its normal SDK environment. Run from the project root:
 
 ```sh
 git submodule update --init -- .deps/xport
