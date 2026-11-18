@@ -12,6 +12,8 @@ SECTOR_SYNC = b'\x00' + b'\xff' * 10 + b'\x00'
 SECTOR_SIZE = 2352
 PAYLOAD_SIZE = 2048
 CATALOG_SIZE = 10 * PAYLOAD_SIZE
+DEFAULT_CUE = Path('DISC/Demolition Racer (USA).cue')
+DEFAULT_SWITCH_FOLDER = Path('dist/switch/DemolitionRacer')
 DISC_SHA256 = '7227af2b19221d10f9d8707402909f8f166668bb5868b1b0ce59c95d472349bc'
 # LBA and ISO directory size on the supported image. XA/STR need whole sectors,
 # including original mode, subheader, channel IDs, position, and padding.
@@ -72,9 +74,26 @@ def read_archive_catalog(catalog, archive_size):
     raise ValueError('DD.DAT index has no terminator')
 
 
-def prepare_assets(image_path, output_path):
-    if output_path.exists():
-        raise FileExistsError(f'Output already exists: {output_path}. Choose a new directory.')
+def resolve_cue_image(cue_path):
+    """Resolve the BIN for the supported single-track CUE layout."""
+    lines = cue_path.read_text(encoding='utf-8-sig').splitlines()
+    statements = [line.strip() for line in lines if line.strip() and line.split()[0].upper() != 'REM']
+    if (len(statements) != 3 or statements[1].upper().split() != ['TRACK', '01', 'MODE2/2352']
+            or statements[2].upper().split() != ['INDEX', '01', '00:00:00']):
+        raise ValueError(f'Unsupported CUE layout in {cue_path}: expected one MODE2/2352 track starting at 00:00:00')
+    file_statement = re.fullmatch(r'FILE\s+(?:"([^"]+)"|([^\s"]+))\s+BINARY', statements[0], re.IGNORECASE)
+    if file_statement:
+        filename = file_statement[1] or file_statement[2]
+        if not re.search(r'[\\/:<>|?*\x00-\x1f]', filename) and Path(filename).suffix.lower() == '.bin':
+            return cue_path.parent / filename
+    raise ValueError(f'Invalid CUE FILE statement in {cue_path}: expected a local BIN filename and BINARY')
+
+
+def prepare_assets(image_path, output_path, *, allow_existing_parent=False):
+    destination_data = output_path / 'DATA'
+    must_not_exist = destination_data if allow_existing_parent else output_path
+    if must_not_exist.exists() or must_not_exist.is_symlink():
+        raise FileExistsError(f'Output already exists: {must_not_exist}. Choose a new directory with --out.')
     with image_path.open('rb') as image:
         digest = hashlib.file_digest(image, 'sha256').hexdigest()
         if digest != DISC_SHA256:
@@ -102,26 +121,58 @@ def prepare_assets(image_path, output_path):
                         raise ValueError(f'Truncated DD.DAT entry: {name}')
                     with destination.open('xb') as output:
                         output.write(payload)
-            # Stage on the same filesystem. The destination is created exclusively.
-            output_path.mkdir()
-            try:
-                data_path.rename(output_path / 'DATA')
-            except OSError:
-                output_path.rmdir()
-                raise
+            if allow_existing_parent:
+                publish_switch_data(data_path, destination_data)
+            else:
+                # Legacy packaging requires a new parent directory.
+                output_path.mkdir()
+                try:
+                    data_path.rename(destination_data)
+                except OSError:
+                    output_path.rmdir()
+                    raise
     return len(entries)
+
+
+def publish_switch_data(staged_data, destination_data):
+    destination_data.parent.mkdir(parents=True, exist_ok=True)
+    children = list(staged_data.iterdir())
+    # Reserve DATA exclusively, even on platforms where rename can replace an empty directory.
+    destination_data.mkdir()
+    moved_children = []
+    try:
+        for child in children:
+            child.rename(destination_data / child.name)
+            moved_children.append(child)
+    except (OSError, KeyboardInterrupt):
+        for child in reversed(moved_children):
+            (destination_data / child.name).rename(child)
+        destination_data.rmdir()
+        raise
+
+
+def prepare_switch_data(image_path, output_path):
+    return prepare_assets(image_path, output_path, allow_existing_parent=True)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('image', type=Path, help='Single-track MODE2/2352 BIN')
-    parser.add_argument('--out', type=Path, default=Path('pack'), help='New output directory (default: pack)')
+    parser.add_argument('disc', nargs='?', type=Path, default=DEFAULT_CUE,
+                        help=f'CUE or raw single-track MODE2/2352 image (default: {DEFAULT_CUE})')
+    parser.add_argument('--out', type=Path,
+                        help=f'Parent of generated DATA (default: {DEFAULT_SWITCH_FOLDER} for CUE, pack for BIN)')
     arguments = parser.parse_args()
     try:
-        entry_count = prepare_assets(arguments.image, arguments.out)
+        if arguments.disc.suffix.lower() == '.cue':
+            image_path = resolve_cue_image(arguments.disc)
+            output_path = arguments.out or DEFAULT_SWITCH_FOLDER
+            entry_count = prepare_switch_data(image_path, output_path)
+        else:
+            output_path = arguments.out or Path('pack')
+            entry_count = prepare_assets(arguments.disc, output_path)
     except (OSError, ValueError) as error:
         parser.exit(1, f'{parser.prog}: {error}\n')
-    print(f'Prepared {entry_count} archive entries in {arguments.out / "DATA"}')
+    print(f'Prepared {entry_count} archive entries in {output_path / "DATA"}')
 
 
 if __name__ == '__main__':

@@ -6,7 +6,7 @@ A native homebrew port of `SLUS-00969`, the US PlayStation release, for the firs
 
 ## Repository layout
 
-- `src/`: game C sources and the Switch, Windows, and web platform files under `src/platform/`.
+- `src/`: the locally maintained game source, based on [DemolitionRacer-xport](https://github.com/psxports/DemolitionRacer-xport), and the Switch, Windows, and web platform files under `src/platform/`. It is the application being built, not a separately pinned dependency.
 - `third_party/xport/`: pinned Git submodule containing the shared PS1 compatibility runtime. It provides services that the native game code calls; it is not an emulator executable. Keep the submodule initialized to build.
 - `switch/`: Switch Makefile, default settings, and generated `build/` output.
 - `tools/` and `tests/`: asset preparation, packaging, and host tests.
@@ -14,14 +14,19 @@ A native homebrew port of `SLUS-00969`, the US PlayStation release, for the firs
 
 ## Prepare your game data
 
-Use your own unmodified US single-track `MODE2/2352` BIN. Python 3.11 or newer is required. Run these from the repository root in PowerShell or Git Bash:
+Put your own unmodified US disc dump in `DISC/` as `Demolition Racer (USA).cue` and `Demolition Racer (USA).bin`. Use Python 3.11 or newer. From the repository root in PowerShell or Git Bash, run:
 
 ```sh
-python -m unittest discover -s tests -v
-python tools/prepare_assets.py "DISC/Demolition Racer (USA).bin"
+python tools/prepare_assets.py
 ```
 
-The tool checks the exact supported disc SHA-256 and makes `pack/DATA/` without changing `DATA/` or `DISC/`. If `pack/` already exists, pass `--out` with a new local path. Supply the raw disc image, not the loose `.XA` and `.STR` files, which do not retain their XA sector metadata.
+This creates `dist/switch/DemolitionRacer/DATA/` only. It reads the single-track `MODE2/2352` CUE, looks for the BIN next to it, checks the BIN's SHA-256 against the supported US release (`SLUS-00969`), and preserves the original XA/STR sectors. No SDK or pip packages are needed. The tool will not overwrite an existing destination `DATA/` or change the disc dump, NRO, settings, or saves.
+
+For a CUE in another folder, pass its path in quotes. To test extraction separately from your current package, pass `--out` with a different parent folder; the tool adds `DATA/` under that folder:
+
+```sh
+python tools/prepare_assets.py "DISC/Demolition Racer (USA).cue" --out "pack/check/switch/DemolitionRacer"
+```
 
 ## Build
 
@@ -36,7 +41,9 @@ Output: `switch/build/DemolitionRacer.nro`. The build does not need the retail f
 
 ## Package and install on an existing homebrew setup
 
-After building the NRO and preparing the assets, run `python tools/package_switch.py` from the repository root. It creates `dist/` with the exact SD card layout. The script refuses to overwrite an existing package; move the old `dist/` aside or pass `--out` with a new directory.
+If you used CUE extraction, place `DemolitionRacer.nro` and `settings.yaml` beside the generated `DATA/` folder. If building from source, use `switch/build/DemolitionRacer.nro` and `switch/settings.yaml`. Keep any existing settings or saves you want to preserve.
+
+For the original two-step build workflow, run `python tools/prepare_assets.py "DISC/Demolition Racer (USA).bin"` to create `pack/DATA/`, then `python tools/package_switch.py` to assemble the NRO, default settings, and data into a new `dist/`. The packager refuses to overwrite an existing `dist/`; use its `--out` option or move the existing package aside first.
 
 Copy the **contents of `dist/`** to the root of the Switch SD card, merging with its existing `switch/` directory. You should end up with:
 

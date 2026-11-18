@@ -1,7 +1,12 @@
 import io
 import struct
+import subprocess
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 
+import tools.prepare_assets as asset_tool
 from tools.prepare_assets import extract_extent, read_archive_catalog, SECTOR_SYNC
 
 
@@ -45,3 +50,63 @@ class AssetPreparationTests(unittest.TestCase):
         catalog = (struct.pack('<32sII', b'ART.TIM', 1, 0) + struct.pack('<32sII', b'art.tim', 1, 1)).ljust(20480, b'\0')
         with self.assertRaises(ValueError):
             read_archive_catalog(catalog, 24576)
+
+
+class SwitchDataPreparationTests(unittest.TestCase):
+    def test_explicit_raw_image_without_suffix_reaches_hash_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            disc = project / 'disc-image'
+            disc.write_bytes(b'unsupported dump')
+            script = Path(__file__).resolve().parents[1] / 'tools' / 'prepare_assets.py'
+            result = subprocess.run([sys.executable, str(script), str(disc)],
+                                    cwd=project, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn('Unsupported disc SHA-256', result.stderr)
+            self.assertFalse((project / 'pack').exists())
+
+    def test_cue_resolves_quoted_bin_relative_to_cue(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cue_path = Path(directory) / 'disc.cue'
+            cue_path.write_text('REM comment\nfile "Game Disc.bin" binary\n track 01 mode2/2352\n index 01 00:00:00\n',
+                                encoding='utf-8-sig')
+            self.assertEqual(asset_tool.resolve_cue_image(cue_path), cue_path.parent / 'Game Disc.bin')
+
+    def test_cue_rejects_unsupported_layouts_and_nonlocal_bin_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cue_path = Path(directory) / 'disc.cue'
+            for filename, layout in (
+                ('disc.bin', 'TRACK 01 MODE1/2352\nINDEX 01 00:00:00'),
+                ('disc.bin', 'TRACK 01 MODE2/2352\nINDEX 01 00:02:00'),
+                ('disc.bin', 'TRACK 01 MODE2/2352\nINDEX 01 00:00:00\nTRACK 02 AUDIO'),
+                ('../disc.bin', 'TRACK 01 MODE2/2352\nINDEX 01 00:00:00'),
+                ('C:disc.bin', 'TRACK 01 MODE2/2352\nINDEX 01 00:00:00'),
+            ):
+                with self.subTest(filename=filename, layout=layout):
+                    cue_path.write_text(f'FILE "{filename}" BINARY\n{layout}', encoding='utf-8')
+                    with self.assertRaisesRegex(ValueError, 'CUE'):
+                        asset_tool.resolve_cue_image(cue_path)
+
+    def test_direct_output_refuses_existing_data_even_when_empty(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output_path = Path(directory)
+            (output_path / 'DATA').mkdir()
+            with self.assertRaisesRegex(FileExistsError, 'DATA'):
+                asset_tool.prepare_switch_data(output_path / 'missing.bin', output_path)
+            self.assertEqual(list((output_path / 'DATA').iterdir()), [])
+
+    def test_no_argument_cli_uses_default_cue_and_checks_bin_hash(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            disc = project / 'DISC'
+            disc.mkdir()
+            (disc / 'Demolition Racer (USA).cue').write_text(
+                'FILE "Demolition Racer (USA).bin" BINARY\nTRACK 01 MODE2/2352\nINDEX 01 00:00:00\n',
+                encoding='utf-8')
+            (disc / 'Demolition Racer (USA).bin').write_bytes(b'unsupported dump')
+            script = Path(__file__).resolve().parents[1] / 'tools' / 'prepare_assets.py'
+            result = subprocess.run([sys.executable, str(script)],
+                                    cwd=project, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn('Unsupported disc SHA-256', result.stderr)
+            self.assertFalse((project / 'dist').exists())
