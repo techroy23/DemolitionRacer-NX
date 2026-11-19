@@ -63,6 +63,10 @@ uint32 sub_80014BC4();
 uint32 sub_800151DC();
 uint32 sub_8003A448(void);
 
+#if defined(AP_SWITCH)
+void switch_hold_loading_screen(const char *screen_name);
+#endif
+
 sint32 sub_8004BA44(uint32 position)
 {
     FUNCTION_MARKER(0x8004BA44u, "SLUS_009.69");
@@ -262,8 +266,7 @@ void sub_80015E38(void)
     sub_8002B88C(r_u32(0x80065238u), 0x800102ACu);
     sub_8002B6CC();
 #if defined(AP_SWITCH)
-    extern void switch_show_boot_loading(void);
-    switch_show_boot_loading();
+    switch_hold_loading_screen("Boot loading");
 #endif
     sub_8001C958();
     sub_8003BC14();
@@ -328,6 +331,10 @@ void sub_80015E38(void)
                 uint32 loading_path = r_u32(0x800596FCu + (selection << 2));
                 sub_8002B88C(loading_buffer, loading_path);
                 sub_8002B6CC();
+#if defined(AP_SWITCH)
+                // Let the original disc callback draw before race setup reuses VRAM.
+                switch_hold_loading_screen("Race loading");
+#endif
                 w_u32(0x80064C18u, 0u);
                 sub_800161CC();
                 w_u32(0x80065248u, 0u);

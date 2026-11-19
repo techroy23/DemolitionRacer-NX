@@ -127,22 +127,22 @@ void switch_record_collision_response(uint64 duration_microseconds)
         collision_response_peak = duration_microseconds;
 }
 
-void switch_show_boot_loading(void)
+void switch_hold_loading_screen(const char *screen_name)
 {
     // Three turns at the original callback's 64 angle units per field.
-    enum { boot_loading_fields = 3 * (4096 / 64) };
+    enum { loading_hold_fields = 3 * (4096 / 64) };
     const uint64 start_time = xport_timer_get();
     const uint64 start_frames = presented_frames;
     const uint64 start_nonblack_frames = nonblack_frames;
-    switch_log(DIAGNOSTICS_INFO, "Boot loading: begin; target-fields=%d", boot_loading_fields);
+    switch_log(DIAGNOSTICS_INFO, "%s: begin; target-fields=%d", screen_name, loading_hold_fields);
 
     // Synchronize to the current field before counting the visible hold.
     const sint32 initial_sync = VSync(0);
-    const sint32 hold_result = initial_sync < 0 ? initial_sync : VSync(boot_loading_fields);
+    const sint32 hold_result = initial_sync < 0 ? initial_sync : VSync(loading_hold_fields);
     const uint64 submitted = presented_frames - start_frames;
     const uint64 nonblack = nonblack_frames - start_nonblack_frames;
     const DiagnosticLevel level = hold_result < 0 || !nonblack ? DIAGNOSTICS_ERROR : DIAGNOSTICS_INFO;
-    switch_log(level, "Boot loading: end; elapsed-ms=%llu submitted=%llu nonblack=%llu vsync-result=%d",
+    switch_log(level, "%s: end; elapsed-ms=%llu submitted=%llu nonblack=%llu vsync-result=%d", screen_name,
                (unsigned long long)((xport_timer_get() - start_time) / 1000u),
                (unsigned long long)submitted, (unsigned long long)nonblack, (int)hold_result);
 }
