@@ -8,6 +8,8 @@ Preserve original UI artwork, layout, fonts, typography, language, camera, physi
 
 ## Starting point
 
+Optional graphics and parallel processing experiments are tracked in [TODO.md](TODO.md), separate from the fidelity milestones.
+
 - The attached 116 game C translation units match the public DemolitionRacer-xport baseline `d7d82178d7ec1fc1614391ceeb6a705b5bb1fde7` apart from possible line endings.[7]
 - The original Windows and web projects depend on shared xport sources. Pin xport at `5b304d489388d9e3ef2fb6e899f682920103d10b` in `src/xport` with its license intact.[8]
 - `DISC/Demolition Racer (USA).cue` identifies one `MODE2/2352` track. Supported `.bin` SHA-256: `7227af2b19221d10f9d8707402909f8f166668bb5868b1b0ce59c95d472349bc`. The loose `.XA` and `.STR` copies in `DATA/` lack the original raw sector envelope expected by `game_data.c`. Use the BIN as media source.
