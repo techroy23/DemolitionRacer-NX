@@ -129,8 +129,8 @@ void switch_record_collision_response(uint64 duration_microseconds)
 
 void switch_show_boot_loading(void)
 {
-    // One turn of the original disc callback: 4096 angle units at 64 per field.
-    enum { boot_loading_fields = 4096 / 64 };
+    // Three turns at the original callback's 64 angle units per field.
+    enum { boot_loading_fields = 3 * (4096 / 64) };
     const uint64 start_time = xport_timer_get();
     const uint64 start_frames = presented_frames;
     const uint64 start_nonblack_frames = nonblack_frames;
@@ -145,6 +145,11 @@ void switch_show_boot_loading(void)
     switch_log(level, "Boot loading: end; elapsed-ms=%llu submitted=%llu nonblack=%llu vsync-result=%d",
                (unsigned long long)((xport_timer_get() - start_time) / 1000u),
                (unsigned long long)submitted, (unsigned long long)nonblack, (int)hold_result);
+}
+
+void switch_log_movie_source_end(const char *path, uint32 frame_number)
+{
+    switch_log(DIAGNOSTICS_INFO, "STR source exhausted: %s at frame %u", path, (unsigned)frame_number);
 }
 
 void switch_record_race_profile(uint64 update_us, uint64 scene_us, uint64 wait_us)

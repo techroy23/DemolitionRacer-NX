@@ -17,6 +17,7 @@ extern uint32 mov_800C8DF4(void);
 static uint32 *movie_vlc[2], *movie_slice, *movie_ring;
 static uint32 movie_logical[12];
 static uint32 movie_active;
+static sint32 movie_source_exhausted;
 #if defined(AP_SWITCH)
 static sint32 movie_display_active;
 
@@ -41,11 +42,12 @@ static sint32 movie_half(sint32 a)
     return (sint32)((uint32)a + ((uint32)a >> 31u)) >> 1;
 }
 
-static void movie_pump(void)
+static sint32 movie_pump(void)
 {
-    stream_pump();
+    sint32 stream_result = stream_pump();
     mdec_psyq_pump(0);
     (void)VSync(-1);
+    return stream_result;
 }
 
 static sint32 movie_slice_words(void)
@@ -132,9 +134,12 @@ uint32 *mov_800C0AE8(uint32 *logical_buffers)
     PSX_RECT clear;
     while (StGetNext(&frame, &raw_header))
     {
-        if (!--timeout)
+        if (movie_source_exhausted || !--timeout)
             return NULL;
-        movie_pump();
+        // xport returns -3 when the source has stopped and its sector queue is empty.
+        // Check the frame ring again before exiting so buffered frames can drain.
+        if (movie_pump() == -3)
+            movie_source_exhausted = 1;
     }
     header = (StHEADER *)raw_header;
     if (header->frameSize < 12u)
@@ -193,6 +198,7 @@ uint32 mov_800C0E10(const char *path)
     PSX_RECT clear = {0, 0, 1024, 512};
     DRAWENV draw;
     DISPENV display;
+    movie_source_exhausted = 0;
 #if defined(AP_SWITCH)
     /* Upload the full decoded picture at the scanout origin, without CRT offsets. */
     x = 0u;
@@ -286,6 +292,8 @@ uint32 mov_800C0E10(const char *path)
             movie_decode_frame(frame, frame_buffer);
             StFreeRing(frame);
         }
+        else if (movie_source_exhausted)
+            w_u32(MOV_GP + 4u, 1u);
         else
             w_u8(MOV_GP + 72u, 1u);
         if (r_u8(MOV_GP + 72u) == 1u)
@@ -337,6 +345,13 @@ uint32 mov_800C0E10(const char *path)
         }
     }
 stop_stream:
+#if defined(AP_SWITCH)
+    if (movie_source_exhausted)
+    {
+        extern void switch_log_movie_source_end(const char *path, uint32 frame_number);
+        switch_log_movie_source_end(path, r_u32(MOV_GP + 68u));
+    }
+#endif
     StClearRing();
     StUnSetRing();
     DecDCToutCallback(NULL);
