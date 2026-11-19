@@ -262,10 +262,8 @@ void sub_80015E38(void)
     sub_8002B88C(r_u32(0x80065238u), 0x800102ACu);
     sub_8002B6CC();
 #if defined(AP_SWITCH)
-    /* Native VBlank is cooperative. Give the registered loading callback two
-       new fields before the front end can clear its original VRAM artwork. */
-    if (VSync(0) >= 0)
-        VSync(2);
+    extern void switch_show_boot_loading(void);
+    switch_show_boot_loading();
 #endif
     sub_8001C958();
     sub_8003BC14();

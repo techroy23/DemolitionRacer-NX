@@ -127,6 +127,26 @@ void switch_record_collision_response(uint64 duration_microseconds)
         collision_response_peak = duration_microseconds;
 }
 
+void switch_show_boot_loading(void)
+{
+    // One turn of the original disc callback: 4096 angle units at 64 per field.
+    enum { boot_loading_fields = 4096 / 64 };
+    const uint64 start_time = xport_timer_get();
+    const uint64 start_frames = presented_frames;
+    const uint64 start_nonblack_frames = nonblack_frames;
+    switch_log(DIAGNOSTICS_INFO, "Boot loading: begin; target-fields=%d", boot_loading_fields);
+
+    // Synchronize to the current field before counting the visible hold.
+    const sint32 initial_sync = VSync(0);
+    const sint32 hold_result = initial_sync < 0 ? initial_sync : VSync(boot_loading_fields);
+    const uint64 submitted = presented_frames - start_frames;
+    const uint64 nonblack = nonblack_frames - start_nonblack_frames;
+    const DiagnosticLevel level = hold_result < 0 || !nonblack ? DIAGNOSTICS_ERROR : DIAGNOSTICS_INFO;
+    switch_log(level, "Boot loading: end; elapsed-ms=%llu submitted=%llu nonblack=%llu vsync-result=%d",
+               (unsigned long long)((xport_timer_get() - start_time) / 1000u),
+               (unsigned long long)submitted, (unsigned long long)nonblack, (int)hold_result);
+}
+
 void switch_record_race_profile(uint64 update_us, uint64 scene_us, uint64 wait_us)
 {
     if (diagnostic_threshold != DIAGNOSTICS_DEBUG || !diagnostic_log)
