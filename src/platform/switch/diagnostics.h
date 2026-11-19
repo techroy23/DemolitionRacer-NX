@@ -1,6 +1,8 @@
 #ifndef SWITCH_DIAGNOSTICS_H
 #define SWITCH_DIAGNOSTICS_H
 
+#include "framebuffer_blit.h"
+
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -16,6 +18,7 @@ typedef struct {
     DiagnosticLevel level;
     bool fps_overlay;
     unsigned upscale;
+    FramebufferFilter display_filter;
 } DiagnosticSettings;
 
 bool diagnostics_parse_settings(FILE *settings, DiagnosticSettings *configuration);

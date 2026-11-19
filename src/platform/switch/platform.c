@@ -27,6 +27,10 @@ static XportCleanup cleanup_handler;
 static int display_width = 1280, display_height = 720;
 static Framebuffer switch_framebuffer;
 static uint64 present_attempts, presented_frames, failed_frames, nonblack_frames;
+static bool race_display_active;
+static uint64 race_display_start, race_display_start_frames, race_display_start_failures;
+static uint64 race_blit_samples, race_blit_total_us, race_blit_peak_us;
+static uint32 race_start_audio_overruns;
 static FILE *diagnostic_log;
 static DiagnosticLevel diagnostic_threshold = DIAGNOSTICS_INFO;
 static unsigned debug_lines;
@@ -60,6 +64,41 @@ static void switch_log(DiagnosticLevel level, const char *format, ...)
         fprintf(stderr, "Could not write %s\n", diagnostic_path);
         fclose(diagnostic_log);
         diagnostic_log = NULL;
+    }
+}
+
+static const char *display_filter_name(FramebufferFilter filter)
+{
+    return filter == FRAMEBUFFER_FILTER_BILINEAR ? "BILINEAR" : "NEAREST";
+}
+
+void switch_set_race_display_active(bool active)
+{
+    if (race_display_active == active)
+        return;
+    race_display_active = active;
+    if (active)
+    {
+        race_display_start = xport_timer_get();
+        race_display_start_frames = presented_frames;
+        race_display_start_failures = failed_frames;
+        race_blit_samples = race_blit_total_us = race_blit_peak_us = 0;
+        race_start_audio_overruns = g_xport_audio_callback_overruns;
+        switch_log(DIAGNOSTICS_INFO, "Race display: begin; filter=%s output=%dx%d upscale=%u",
+                   display_filter_name(game_settings.display_filter), (int)display_width, (int)display_height,
+                   game_settings.upscale);
+    }
+    else
+    {
+        switch_log(DIAGNOSTICS_INFO, "Race display: end; filter=%s elapsed-ms=%llu submitted=%llu failed=%llu blit-samples=%llu blit-avg-us=%llu blit-max-us=%llu audio-overruns=%u",
+                   display_filter_name(game_settings.display_filter),
+                   (unsigned long long)((xport_timer_get() - race_display_start) / 1000u),
+                   (unsigned long long)(presented_frames - race_display_start_frames),
+                   (unsigned long long)(failed_frames - race_display_start_failures),
+                   (unsigned long long)race_blit_samples,
+                   (unsigned long long)(race_blit_samples ? race_blit_total_us / race_blit_samples : 0),
+                   (unsigned long long)race_blit_peak_us,
+                   (unsigned)(g_xport_audio_callback_overruns - race_start_audio_overruns));
     }
 }
 
@@ -112,9 +151,11 @@ static void start_diagnostics(void)
                diagnostics_level_name(diagnostic_threshold), game_settings.fps_overlay ? "true" : "false",
                game_settings.upscale, (int)appletGetAppletType(), appletGetOperationMode() == AppletOperationMode_Console);
     if (!valid)
-        switch_log(DIAGNOSTICS_ERROR, "Invalid settings.yaml; using LOG=INFO FPS_OVERLAY=false UPSCALE=FIT");
+        switch_log(DIAGNOSTICS_ERROR, "Invalid settings.yaml; using LOG=INFO FPS_OVERLAY=false UPSCALE=FIT DISPLAY_FILTER=NEAREST");
     else if (settings_error && settings_error != ENOENT)
         switch_log(DIAGNOSTICS_ERROR, "Could not read settings.yaml (errno=%d); using INFO", settings_error);
+    switch_log(DIAGNOSTICS_INFO, "Display experiment: DISPLAY_FILTER=%s; scope=race; movies, loading and frontend use nearest",
+               display_filter_name(game_settings.display_filter));
 }
 
 void switch_record_collision_response(uint64 duration_microseconds)
@@ -521,16 +562,19 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
     uint32_t visible_colors = 0;
     const FramebufferSource crop = {source_x, source_y, source_width, source_height};
     bool movie = dr_movie_display_active() != 0;
+    const FramebufferFilter filter = !movie && race_display_active ? game_settings.display_filter : FRAMEBUFFER_FILTER_NEAREST;
     bool copied = false;
     if (stride_bytes % sizeof(*destination) == 0)
     {
         size_t stride = stride_bytes / sizeof(*destination);
         copied = movie ? framebuffer_blit_movie(destination, stride, display_width, display_height,
                                                 pixels, bitmap_width, bitmap_height, crop, &visible_colors)
-                       : framebuffer_blit_scaled(destination, stride, display_width, display_height,
-                                                pixels, bitmap_width, bitmap_height, crop,
-                                                game_settings.upscale, &visible_colors);
+                       : framebuffer_blit_filtered(destination, stride, display_width, display_height,
+                                                 pixels, bitmap_width, bitmap_height, crop,
+                                                 game_settings.upscale, filter, &visible_colors);
     }
+    const bool measure_race_blit = copied && race_display_active && !movie;
+    const uint64 blit_us = measure_race_blit ? xport_timer_get() - dequeue_done : 0;
     if (copied && game_settings.fps_overlay)
         framebuffer_draw_fps(destination, stride_bytes / sizeof(*destination),
                              display_width, display_height, submission_fps);
@@ -553,6 +597,23 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
     bool nonblack = visible_colors != 0;
     ++presented_frames;
     uint64 submitted_us = xport_timer_get();
+    if (measure_race_blit)
+    {
+        ++race_blit_samples;
+        race_blit_total_us += blit_us;
+        if (blit_us > race_blit_peak_us) race_blit_peak_us = blit_us;
+        if (race_blit_samples == 1 || race_blit_samples % 120 == 0)
+        {
+            const FramebufferViewport viewport = framebuffer_viewport(display_width, display_height, game_settings.upscale);
+            switch_log(DIAGNOSTICS_DEBUG, "Race filter sample: filter=%s frames=%llu source=%dx%d crop=%d,%d %dx%d viewport=%d,%d %dx%d stride-bytes=%u blit-us=%llu avg-us=%llu max-us=%llu audio-overruns=%u",
+                       display_filter_name(filter), (unsigned long long)race_blit_samples, (int)bitmap_width, (int)bitmap_height,
+                       (int)crop.x, (int)crop.y, (int)crop.width, (int)crop.height,
+                       (int)viewport.x, (int)viewport.y, (int)viewport.width, (int)viewport.height, (unsigned)stride_bytes,
+                       (unsigned long long)blit_us, (unsigned long long)(race_blit_total_us / race_blit_samples),
+                       (unsigned long long)race_blit_peak_us,
+                       (unsigned)(g_xport_audio_callback_overruns - race_start_audio_overruns));
+        }
+    }
     if (previous_submission_time)
     {
         uint64 gap = submitted_us - previous_submission_time;
@@ -1056,6 +1117,7 @@ int main(void)
         xport_main();
     }
     game_running = false;
+    switch_set_race_display_active(false);
     switch_log(DIAGNOSTICS_INFO, "Video totals: requested=%llu submitted=%llu nonblack=%llu failed=%llu; audio buffers=%u overruns=%u",
                (unsigned long long)present_attempts, (unsigned long long)presented_frames,
                (unsigned long long)nonblack_frames, (unsigned long long)failed_frames,

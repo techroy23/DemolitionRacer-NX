@@ -47,6 +47,7 @@ This creates `pack/DATA/` first, then a fresh `dist/` containing the app, settin
 
 - `FPS_OVERLAY` counts framebuffer submissions, not unique game frames, race updates, or panel refreshes.
 - `UPSCALE` accepts `FIT`, `x2`, `x3`, and `x4`. Integer modes scale a 320×240 reference to 640×480, 960×720, or 1280×960. The 4× mode needs a compatible 1080p docked framebuffer and is capped at 3× on the 720p path. Scaling does not rerender geometry.
+- On the display-filter test branch, `DISPLAY_FILTER: NEAREST` (also the default when omitted) keeps the original scaling. `BILINEAR` smooths the completed race image, including the in-race HUD, without affecting the launcher, boot movies, loading screens, or front end. Relaunch after editing. For an A/B check, run the same race with the same `UPSCALE` and `LOG: DEBUG` in both modes. Compare the `Race display`, `Race filter sample`, and `Present profile` lines for blit time, submission gaps and audio overruns.
 - Saves go in `SAVE/` next to the NRO. A legacy `DemolitionRacer.sav` can migrate if there is no existing save or recovery backup there. The exit chord does not force a save.
 - A new `DemolitionRacer_YYYY-MM-DD_HH-MM-SS.log` uses the console's local time. `DEBUG` includes file access, elapsed time, framebuffer, audio, and save diagnostics. Use `INFO` for major events or `ERROR` for errors only.
 

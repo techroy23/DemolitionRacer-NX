@@ -4,6 +4,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(AP_SWITCH)
+#include <stdbool.h>
+void switch_set_race_display_active(bool active);
+#endif
+
 #define R32(a) (*(uint32 *)psx_addr((a), 4u))
 #define R16(a) (*(uint16 *)psx_addr((a), 2u))
 #define R8(a) (*(uint8 *)psx_addr((a), 1u))
@@ -524,6 +529,9 @@ uint32 sub_80013A9C(void)
     value = R32(0x80065338u);
     result = R32(0x80064A58u);
     R32(0x800651A4u) = value;
+#if defined(AP_SWITCH)
+    if (!result) switch_set_race_display_active(true);
+#endif
     while (!result)
     {
 #if defined(AP_SWITCH)
@@ -700,6 +708,9 @@ uint32 sub_80013A9C(void)
             race_call0(0x8001CBACu);
         result = R32(0x80064A58u);
     }
+#if defined(AP_SWITCH)
+    switch_set_race_display_active(false);
+#endif
     race_call0(0x8001CD48u);
     race_call0(0x8001E328u);
     sub_8003AAC8(0u, 0u, 0u);
@@ -841,6 +852,9 @@ uint32 sub_8001BCAC(void)
     result = R32(0x80064D0Cu);
     R32(0x80065280u) = first;
     R32(0x80065284u) = second;
+#if defined(AP_SWITCH)
+    if (!result) switch_set_race_display_active(true);
+#endif
     while (!result)
     {
         if (R32(0x800651D0u) || R32(0x8006528Cu))
@@ -933,6 +947,9 @@ uint32 sub_8001BCAC(void)
         race_call0(0x80013364u);
         result = R32(0x80064D0Cu);
     }
+#if defined(AP_SWITCH)
+    switch_set_race_display_active(false);
+#endif
     race_call0(0x8001CD48u);
     race_call0(0x8001E328u);
     sub_8003AAC8(0u, 0u, 0u);

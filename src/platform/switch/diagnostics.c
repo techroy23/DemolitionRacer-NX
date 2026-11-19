@@ -22,11 +22,11 @@ const char *diagnostics_level_name(DiagnosticLevel level)
 
 bool diagnostics_parse_settings(FILE *settings, DiagnosticSettings *configuration)
 {
-    *configuration = (DiagnosticSettings){DIAGNOSTICS_INFO, false, 0};
+    *configuration = (DiagnosticSettings){DIAGNOSTICS_INFO, false, 0, FRAMEBUFFER_FILTER_NEAREST};
     DiagnosticSettings parsed = *configuration;
     if (!settings)
         return true;
-    const char *keys[] = {"LOG", "FPS_OVERLAY", "UPSCALE"};
+    const char *keys[] = {"LOG", "FPS_OVERLAY", "UPSCALE", "DISPLAY_FILTER"};
     unsigned defined = 0;
     bool first_line = true;
     char line[256];
@@ -81,6 +81,10 @@ bool diagnostics_parse_settings(FILE *settings, DiagnosticSettings *configuratio
                 if (!strcmp(value, "FIT")) break;
                 if (strlen(value) != 2 || value[0] != 'x' || value[1] < '2' || value[1] > '4') return false;
                 parsed.upscale = (unsigned)(value[1] - '0');
+                break;
+            case 3:
+                if (!strcmp(value, "BILINEAR")) parsed.display_filter = FRAMEBUFFER_FILTER_BILINEAR;
+                else if (strcmp(value, "NEAREST")) return false;
                 break;
         }
         defined |= 1u << field;

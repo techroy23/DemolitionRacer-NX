@@ -30,10 +30,62 @@ FramebufferViewport framebuffer_movie_viewport(int32_t width, int32_t height,
                                  active_width, active_height};
 }
 
+static uint32_t blend_color(uint32_t first, uint32_t second, uint32_t weight)
+{
+    const uint32_t inverse = 256u - weight;
+    const uint32_t red_blue = ((first & 0xff00ffu) * inverse + (second & 0xff00ffu) * weight + 0x800080u) >> 8;
+    const uint32_t green = ((first & 0x00ff00u) * inverse + (second & 0x00ff00u) * weight + 0x008000u) >> 8;
+    return (red_blue & 0xff00ffu) | (green & 0x00ff00u);
+}
+
+static uint32_t blit_bilinear(uint32_t *destination, size_t stride, int32_t width, int32_t height,
+                             const uint32_t *source, int32_t source_stride, FramebufferSource crop,
+                             FramebufferViewport viewport)
+{
+    // Map output pixel centers onto source pixel centers. Clamp to the crop, not VRAM.
+    enum { fraction_bits = 24, fraction_unit = 1 << fraction_bits };
+    const int64_t horizontal_step = (int64_t)crop.width * fraction_unit / viewport.width;
+    const int64_t vertical_step = (int64_t)crop.height * fraction_unit / viewport.height;
+    const int64_t horizontal_limit = (int64_t)(crop.width - 1) * fraction_unit;
+    const int64_t vertical_limit = (int64_t)(crop.height - 1) * fraction_unit;
+    int64_t vertical = (vertical_step - fraction_unit) / 2;
+    uint32_t colors = 0;
+    for (int32_t y = 0; y < height; ++y)
+    {
+        uint32_t *row = destination + (size_t)y * stride;
+        if (y < viewport.y || y - viewport.y >= viewport.height)
+        {
+            for (int32_t x = 0; x < width; ++x) row[x] = 0xff000000u;
+            continue;
+        }
+        const int64_t clamped_vertical = vertical < 0 ? 0 : vertical > vertical_limit ? vertical_limit : vertical;
+        const int32_t top = (int32_t)(clamped_vertical >> fraction_bits);
+        const uint32_t vertical_weight = ((clamped_vertical & (fraction_unit - 1)) + (1 << 15)) >> 16;
+        const uint32_t *upper = source + (size_t)(crop.y + top) * source_stride + crop.x;
+        const uint32_t *lower = upper + (top < crop.height - 1 ? source_stride : 0);
+        int64_t horizontal = (horizontal_step - fraction_unit) / 2;
+        for (int32_t x = 0; x < viewport.x; ++x) row[x] = 0xff000000u;
+        for (int32_t x = 0; x < viewport.width; ++x, horizontal += horizontal_step)
+        {
+            const int64_t clamped_horizontal = horizontal < 0 ? 0 : horizontal > horizontal_limit ? horizontal_limit : horizontal;
+            const int32_t left = (int32_t)(clamped_horizontal >> fraction_bits);
+            const int32_t right = left + (left < crop.width - 1);
+            const uint32_t horizontal_weight = ((clamped_horizontal & (fraction_unit - 1)) + (1 << 15)) >> 16;
+            const uint32_t color = blend_color(blend_color(upper[left], upper[right], horizontal_weight),
+                                               blend_color(lower[left], lower[right], horizontal_weight), vertical_weight);
+            colors |= color;
+            row[viewport.x + x] = color | 0xff000000u;
+        }
+        for (int32_t x = viewport.x + viewport.width; x < width; ++x) row[x] = 0xff000000u;
+        vertical += vertical_step;
+    }
+    return colors;
+}
+
 static bool framebuffer_blit_viewport(uint32_t *destination, size_t stride, int32_t width, int32_t height,
                                       const uint32_t *source, int32_t source_width, int32_t source_height,
                                       FramebufferSource crop, FramebufferViewport viewport,
-                                      uint32_t *visible_colors)
+                                      FramebufferFilter filter, uint32_t *visible_colors)
 {
     if (!destination || !source || width < 4 || height < 3 || stride < (size_t)width ||
         stride > SIZE_MAX / sizeof(*destination) / (size_t)height ||
@@ -44,6 +96,13 @@ static bool framebuffer_blit_viewport(uint32_t *destination, size_t stride, int3
         crop.x > source_width - crop.width || crop.y > source_height - crop.height ||
         viewport.width <= 0 || viewport.height <= 0)
         return false;
+
+    if (filter == FRAMEBUFFER_FILTER_BILINEAR)
+    {
+        const uint32_t colors = blit_bilinear(destination, stride, width, height, source, source_width, crop, viewport);
+        if (visible_colors) *visible_colors = colors;
+        return true;
+    }
 
     int32_t active_width = viewport.width, active_height = viewport.height;
     int32_t left = viewport.x, top = viewport.y;
@@ -113,12 +172,21 @@ static bool framebuffer_blit_viewport(uint32_t *destination, size_t stride, int3
     return true;
 }
 
+bool framebuffer_blit_filtered(uint32_t *destination, size_t stride, int32_t width, int32_t height,
+                               const uint32_t *source, int32_t source_width, int32_t source_height,
+                               FramebufferSource crop, unsigned upscale, FramebufferFilter filter,
+                               uint32_t *visible_colors)
+{
+    return framebuffer_blit_viewport(destination, stride, width, height, source, source_width, source_height,
+                                     crop, framebuffer_viewport(width, height, upscale), filter, visible_colors);
+}
+
 bool framebuffer_blit_scaled(uint32_t *destination, size_t stride, int32_t width, int32_t height,
                              const uint32_t *source, int32_t source_width, int32_t source_height,
                              FramebufferSource crop, unsigned upscale, uint32_t *visible_colors)
 {
-    return framebuffer_blit_viewport(destination, stride, width, height, source, source_width, source_height,
-                                     crop, framebuffer_viewport(width, height, upscale), visible_colors);
+    return framebuffer_blit_filtered(destination, stride, width, height, source, source_width, source_height,
+                                     crop, upscale, FRAMEBUFFER_FILTER_NEAREST, visible_colors);
 }
 
 bool framebuffer_blit_movie(uint32_t *destination, size_t stride, int32_t width, int32_t height,
@@ -127,7 +195,7 @@ bool framebuffer_blit_movie(uint32_t *destination, size_t stride, int32_t width,
 {
     return framebuffer_blit_viewport(destination, stride, width, height, source, source_width, source_height,
                                      crop, framebuffer_movie_viewport(width, height, crop.width, crop.height),
-                                     visible_colors);
+                                     FRAMEBUFFER_FILTER_NEAREST, visible_colors);
 }
 
 bool framebuffer_blit_4_3(uint32_t *destination, size_t stride, int32_t width, int32_t height,

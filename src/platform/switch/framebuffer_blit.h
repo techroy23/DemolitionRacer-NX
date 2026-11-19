@@ -10,6 +10,15 @@ typedef struct {
 } FramebufferSource;
 
 typedef FramebufferSource FramebufferViewport;
+typedef enum {
+    FRAMEBUFFER_FILTER_NEAREST,
+    FRAMEBUFFER_FILTER_BILINEAR
+} FramebufferFilter;
+
+bool framebuffer_blit_filtered(uint32_t *destination, size_t stride, int32_t width, int32_t height,
+                               const uint32_t *source, int32_t source_width, int32_t source_height,
+                               FramebufferSource crop, unsigned upscale, FramebufferFilter filter,
+                               uint32_t *visible_colors);
 int32_t framebuffer_integer_scale(int32_t output_width, int32_t input_width);
 FramebufferViewport framebuffer_viewport(int32_t width, int32_t height, unsigned upscale);
 FramebufferViewport framebuffer_movie_viewport(int32_t width, int32_t height,

@@ -55,5 +55,30 @@ int main(void)
     for (unsigned y = 0; y < 9; ++y)
         for (unsigned x = 0; x < 12; ++x)
             assert(tripled[y * 12 + x] == (0xff000000u | pattern[(y / 3) * 4 + x / 3]));
+    const uint32_t corners[] = {
+        0x00ffffff, 0x00ff0000, 0x0000ff00,
+        0x00ffffff, 0x000000ff, 0x00000000
+    };
+    uint32_t filtered[10 * 6] = {0};
+    const FramebufferSource square = {1, 0, 2, 2};
+    assert(framebuffer_blit_filtered(filtered, 10, 10, 6, corners, 3, 2, square,
+                                     0, FRAMEBUFFER_FILTER_BILINEAR, &visible_colors));
+    assert(filtered[0] == 0xff000000 && filtered[1] == 0xffff0000);
+    assert(filtered[8] == 0xff00ff00 && filtered[9] == 0xff000000);
+    assert(filtered[1 + 2 * 10] == 0xffaa0055 && filtered[1 + 5 * 10] == 0xff0000ff);
+    assert(filtered[5 * 10 + 8] == 0xff000000 && visible_colors == 0x00ffffff);
+    assert(framebuffer_blit_filtered(output, 14, 12, 6, black, 1, 1,
+                                     (FramebufferSource){0, 0, 1, 1}, 0,
+                                     FRAMEBUFFER_FILTER_BILINEAR, &visible_colors));
+    assert(visible_colors == 0 && output[2] == 0xff000000);
+    assert(!framebuffer_blit_filtered(output, 14, 12, 6, corners, 3, 2,
+                                      (FramebufferSource){2, 0, 2, 2}, 0,
+                                      FRAMEBUFFER_FILTER_BILINEAR, NULL));
+    assert(framebuffer_blit_filtered(tripled, 12, 12, 9, pattern, 4, 3,
+                                     (FramebufferSource){0, 0, 4, 3}, 0,
+                                     FRAMEBUFFER_FILTER_NEAREST, NULL));
+    for (unsigned y = 0; y < 9; ++y)
+        for (unsigned x = 0; x < 12; ++x)
+            assert(tripled[y * 12 + x] == (0xff000000u | pattern[(y / 3) * 4 + x / 3]));
     return 0;
 }

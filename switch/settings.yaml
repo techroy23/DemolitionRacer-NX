@@ -5,3 +5,5 @@ LOG: DEBUG
 FPS_OVERLAY: false
 # FIT (default), x2 (640x480), x3 (960x720), or x4 (1280x960 where supported).
 UPSCALE: FIT
+# NEAREST keeps the original pixels; BILINEAR softens the race image and HUD.
+DISPLAY_FILTER: NEAREST

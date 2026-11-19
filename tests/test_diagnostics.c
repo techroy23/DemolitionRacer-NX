@@ -12,11 +12,24 @@ static FILE *stream_with(const char *text)
 
 int main(void)
 {
-    FILE *options = stream_with("LOG: DEBUG\nFPS_OVERLAY: true\nUPSCALE: x4\n");
+    FILE *options = stream_with("LOG: DEBUG\nFPS_OVERLAY: true\nUPSCALE: x4\nDISPLAY_FILTER: BILINEAR\n");
     DiagnosticSettings config;
     assert(diagnostics_parse_settings(options, &config));
     assert(config.level == DIAGNOSTICS_DEBUG && config.fps_overlay && config.upscale == 4);
+    assert(config.display_filter == FRAMEBUFFER_FILTER_BILINEAR);
     fclose(options);
+    options = stream_with("DISPLAY_FILTER: NEAREST\n");
+    assert(diagnostics_parse_settings(options, &config));
+    assert(config.display_filter == FRAMEBUFFER_FILTER_NEAREST);
+    fclose(options);
+    options = stream_with("DISPLAY_FILTER: MSAA\n");
+    assert(!diagnostics_parse_settings(options, &config));
+    assert(config.display_filter == FRAMEBUFFER_FILTER_NEAREST);
+    fclose(options);
+    options = stream_with("DISPLAY_FILTER: NEAREST\nDISPLAY_FILTER: BILINEAR\n");
+    assert(!diagnostics_parse_settings(options, &config));
+    fclose(options);
+    assert(diagnostics_parse_settings(NULL, &config) && config.display_filter == FRAMEBUFFER_FILTER_NEAREST);
     options = stream_with("FPS_OVERLAY: false\nUPSCALE: x7\n");
     assert(!diagnostics_parse_settings(options, &config));
     assert(!config.fps_overlay && config.upscale == 0);
