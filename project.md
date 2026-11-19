@@ -4,10 +4,15 @@ This is an unofficial native homebrew port of the US PlayStation release of *Dem
 
 ## Status
 
-- Version `0.2.2` gives the original track loading screen three disc rotations before race setup, matching the boot hold from `0.2.1`. The Switch Homebrew Menu lists `An2Kin` as the port author. Upstream credits remain below.
-- Version `0.1.5` completed a race, saved, and exited cleanly in a handheld OLED test. That run does not establish parity across all tracks or modes, or validate docked performance.
 - The current Switch target is one player. Two-player support is outside the current scope.
 - Compare presentation and behavior against the US retail release before treating a difference as an improvement. See the [porting plan](PLAN.MD) for the test matrix and references.
+
+## Version history
+
+- Version `0.2.2` gives the original track loading screen three disc rotations before race setup, matching the boot hold from `0.2.1`.
+- Version `0.2.1` improves boot movie transitions and shows the original boot loading disc for three rotations.
+- Version `0.2.0` established the development baseline and set `An2Kin` as the port author in the Switch Homebrew Menu. Upstream credits remain below.
+- Version `0.1.5` completed a race, saved, and exited cleanly in a handheld OLED test. That run does not establish parity across all tracks or modes, or validate docked performance.
 
 ## Source and credits
 
