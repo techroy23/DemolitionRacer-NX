@@ -28,7 +28,7 @@ Preserve original UI artwork, layout, fonts, typography, language, camera, physi
 
 ## How to verify fidelity
 
-- Race loading: the handheld log showed only 6 ms between opening `PRES/CD.TIM` and opening the first track asset. The Switch now gives the existing track-selected `FRONTEND/LOADING/*.TIM` artwork and original disc callback the same 192-field hold as boot, before race setup can reuse VRAM. Verify the `USS.TIM` screen and a second track on OLED, then confirm the race starts normally. The log distinguishes `Race loading` from `Boot loading`.
+- Race loading: the handheld log showed only 6 ms between opening `PRES/CD.TIM` and opening the first track asset. The Switch now gives the existing track-selected `FRONTEND/LOADING/*.TIM` artwork and original disc callback the same 192-field hold as boot, before race setup can reuse VRAM. In the OLED handheld test, `USS.TIM` and `MOTOR.TIM` completed the hold in 3.243 s and 3.281 s respectively, each with 193 nonblack submissions, and both races started. The log distinguishes `Race loading` from `Boot loading`.
 
 - Startup pacing follow-up: the OLED handheld log confirmed that `INTRO.STR` exhausted its source at frame 1649 and `TATOU.STR` opened 4 ms later. The black interval before `TATOU.STR` opened fell from 17.957 s to 1.658 s, without RAM preloading. The three-turn hold completed all 192 fields in 3.246 s, with 193 nonblack submissions. The run reached the menu, loaded the save, and exited cleanly with zero failed video submissions and three audio overruns around menu entry. This was a boot-to-menu smoke test, not a race or docked test.
 
