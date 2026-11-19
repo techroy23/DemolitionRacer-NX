@@ -44,6 +44,8 @@ If something breaks, share the dated `.log` file next to the NRO and say what wa
 
 ## More information
 
+The Switch Homebrew Menu icon and launcher splash artwork were sourced from [Demolition Racer on SteamGridDB](https://www.steamgriddb.com/game/5270215). These are separate from the original in-game loading screen, which comes from your disc dump.
+
 - [Project goals, status, and credits](project.md)
 - [Build, settings, and technical notes](technical.md)
 - [Install instructions for AI assistants](AI.md)
