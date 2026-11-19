@@ -475,6 +475,7 @@ sint32 xport_window_init(void)
 sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_height,
                      sint32 source_x, sint32 source_y, sint32 source_width, sint32 source_height, const char *title)
 {
+    extern sint32 dr_movie_display_active(void);
     (void)title;
     if (headless)
         return 1;
@@ -494,10 +495,17 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
     uint64 dequeue_done = xport_timer_get();
     uint32_t visible_colors = 0;
     const FramebufferSource crop = {source_x, source_y, source_width, source_height};
-    bool copied = stride_bytes % sizeof(*destination) == 0 &&
-                  framebuffer_blit_scaled(destination, stride_bytes / sizeof(*destination),
-                                          display_width, display_height, pixels, bitmap_width,
-                                          bitmap_height, crop, game_settings.upscale, &visible_colors);
+    bool movie = dr_movie_display_active() != 0;
+    bool copied = false;
+    if (stride_bytes % sizeof(*destination) == 0)
+    {
+        size_t stride = stride_bytes / sizeof(*destination);
+        copied = movie ? framebuffer_blit_movie(destination, stride, display_width, display_height,
+                                                pixels, bitmap_width, bitmap_height, crop, &visible_colors)
+                       : framebuffer_blit_scaled(destination, stride, display_width, display_height,
+                                                pixels, bitmap_width, bitmap_height, crop,
+                                                game_settings.upscale, &visible_colors);
+    }
     if (copied && game_settings.fps_overlay)
         framebuffer_draw_fps(destination, stride_bytes / sizeof(*destination),
                              display_width, display_height, submission_fps);

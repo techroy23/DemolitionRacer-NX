@@ -17,6 +17,14 @@ extern uint32 mov_800C8DF4(void);
 static uint32 *movie_vlc[2], *movie_slice, *movie_ring;
 static uint32 movie_logical[12];
 static uint32 movie_active;
+#if defined(AP_SWITCH)
+static sint32 movie_display_active;
+
+sint32 dr_movie_display_active(void)
+{
+    return movie_display_active;
+}
+#endif
 static size_t movie_vlc_bytes, movie_slice_bytes;
 
 static sint32 movie_div(sint32 a, sint32 b)
@@ -185,6 +193,11 @@ uint32 mov_800C0E10(const char *path)
     PSX_RECT clear = {0, 0, 1024, 512};
     DRAWENV draw;
     DISPENV display;
+#if defined(AP_SWITCH)
+    /* Upload the full decoded picture at the scanout origin, without CRT offsets. */
+    x = 0u;
+    y = 0u;
+#endif
     w_u32(MOV_GP + 108u, 10u);
     w_u32(MOV_GP + 104u, 0u);
     w_u32(MOV_GP + 112u, 4u);
@@ -296,8 +309,10 @@ uint32 mov_800C0E10(const char *path)
         w_u32(MOV_GP + 128u, frame_buffer);
         SetDefDispEnv(&display, 0, (sint32)(frame_buffer << 8u), r_s16(0x800E0534u + frame_buffer * 8u), r_s16(0x800E0536u + frame_buffer * 8u));
         SetDefDrawEnv(&draw, r_s16(0x800E0530u + frame_buffer * 8u), r_s16(0x800E0532u + frame_buffer * 8u), r_s16(0x800E0534u + frame_buffer * 8u), r_s16(0x800E0536u + frame_buffer * 8u));
+#if !defined(AP_SWITCH)
         display.screen.x = (sint16)r_u32(MOV_GP + 108u);
         display.screen.y = (sint16)r_u32(MOV_GP + 112u);
+#endif
         if (mode == 3u)
         {
             display.isrgb24 = 1u;
@@ -305,6 +320,9 @@ uint32 mov_800C0E10(const char *path)
         }
         PutDispEnv(&display);
         PutDrawEnv(&draw);
+#if defined(AP_SWITCH)
+        movie_display_active = 1;
+#endif
         SetDispMask(1);
         if (r_u32(MOV_GP + 4u) == 1u)
         {
@@ -367,6 +385,9 @@ uint32 mov_800C0C74(void)
     StopRCnt(0xF2000002u, 0x800E0384u, 0x800E038Cu);
     StopRCnt(0xF2000003u, 0x800E0384u, 0x800E038Cu);
     ResetGraph(3);
+#if defined(AP_SWITCH)
+    movie_display_active = 0;
+#endif
     mov_800CA584();
     StopCallback();
     draft_agent1_missing_diagnostic("bye2\n");

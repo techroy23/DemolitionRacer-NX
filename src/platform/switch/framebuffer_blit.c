@@ -16,9 +16,24 @@ FramebufferViewport framebuffer_viewport(int32_t width, int32_t height, unsigned
     return (FramebufferViewport){(width - 4 * scale) / 2, (height - 3 * scale) / 2, 4 * scale, 3 * scale};
 }
 
-bool framebuffer_blit_scaled(uint32_t *destination, size_t stride, int32_t width, int32_t height,
-                          const uint32_t *source, int32_t source_width, int32_t source_height,
-                          FramebufferSource crop, unsigned upscale, uint32_t *visible_colors)
+FramebufferViewport framebuffer_movie_viewport(int32_t width, int32_t height,
+                                                int32_t movie_width, int32_t movie_height)
+{
+    if (width <= 0 || height <= 0 || movie_width <= 0 || movie_height <= 0)
+        return (FramebufferViewport){0};
+    int32_t active_width = width, active_height = height;
+    if ((int64_t)width * movie_height > (int64_t)height * movie_width)
+        active_width = (int32_t)((int64_t)height * movie_width / movie_height);
+    else
+        active_height = (int32_t)((int64_t)width * movie_height / movie_width);
+    return (FramebufferViewport){(width - active_width) / 2, (height - active_height) / 2,
+                                 active_width, active_height};
+}
+
+static bool framebuffer_blit_viewport(uint32_t *destination, size_t stride, int32_t width, int32_t height,
+                                      const uint32_t *source, int32_t source_width, int32_t source_height,
+                                      FramebufferSource crop, FramebufferViewport viewport,
+                                      uint32_t *visible_colors)
 {
     if (!destination || !source || width < 4 || height < 3 || stride < (size_t)width ||
         stride > SIZE_MAX / sizeof(*destination) / (size_t)height ||
@@ -26,10 +41,10 @@ bool framebuffer_blit_scaled(uint32_t *destination, size_t stride, int32_t width
         (size_t)source_width > SIZE_MAX / sizeof(*source) / (size_t)source_height ||
         crop.x < 0 || crop.y < 0 || crop.width <= 0 || crop.height <= 0 ||
         crop.width > source_width || crop.height > source_height ||
-        crop.x > source_width - crop.width || crop.y > source_height - crop.height)
+        crop.x > source_width - crop.width || crop.y > source_height - crop.height ||
+        viewport.width <= 0 || viewport.height <= 0)
         return false;
 
-    FramebufferViewport viewport = framebuffer_viewport(width, height, upscale);
     int32_t active_width = viewport.width, active_height = viewport.height;
     int32_t left = viewport.x, top = viewport.y;
     int32_t integer_scale = framebuffer_integer_scale(active_width, crop.width);
@@ -96,6 +111,23 @@ bool framebuffer_blit_scaled(uint32_t *destination, size_t stride, int32_t width
     if (visible_colors)
         *visible_colors = colors & 0x00ffffffu;
     return true;
+}
+
+bool framebuffer_blit_scaled(uint32_t *destination, size_t stride, int32_t width, int32_t height,
+                             const uint32_t *source, int32_t source_width, int32_t source_height,
+                             FramebufferSource crop, unsigned upscale, uint32_t *visible_colors)
+{
+    return framebuffer_blit_viewport(destination, stride, width, height, source, source_width, source_height,
+                                     crop, framebuffer_viewport(width, height, upscale), visible_colors);
+}
+
+bool framebuffer_blit_movie(uint32_t *destination, size_t stride, int32_t width, int32_t height,
+                            const uint32_t *source, int32_t source_width, int32_t source_height,
+                            FramebufferSource crop, uint32_t *visible_colors)
+{
+    return framebuffer_blit_viewport(destination, stride, width, height, source, source_width, source_height,
+                                     crop, framebuffer_movie_viewport(width, height, crop.width, crop.height),
+                                     visible_colors);
 }
 
 bool framebuffer_blit_4_3(uint32_t *destination, size_t stride, int32_t width, int32_t height,

@@ -336,6 +336,9 @@ sint32 sub_80033854(uint32 object, sint32 damage);
 void game_8009082C(uint32 owner, uint32 value);
 void game_800AEDDC(uint32 player);
 sint32 dr_movie_entry(void);
+#if defined(AP_SWITCH)
+sint32 dr_movie_display_active(void);
+#endif
 uint32 mov_800C0C74(void);
 uint32 mov_800C0E10(const char *path);
 uint32 *mov_800C0AE8(uint32 *logical_buffers);

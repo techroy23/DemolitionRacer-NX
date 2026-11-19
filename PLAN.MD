@@ -28,6 +28,8 @@ Preserve original UI artwork, layout, fonts, typography, language, camera, physi
 
 ## How to verify fidelity
 
+- Boot transition: `PRES/CD.TIM` and `PRES/LEGAL.TIM` are present in the current asset pack. Their archive-relative sectors start at 14493 and 14498, or disc LBAs 14765 and 14770. The US executable's boot descriptor plays `INTRO.STR`, `TATOU.STR`, then `PIT.STR`. The Switch path services the original loading callback before the front end clears VRAM and fits decoded STR frames separately from the 4:3 game view. Verify the transition on an OLED and compare its duration and animation against the original disc; no original duration is assumed here.
+
 1. Capture the US disc in DuckStation without enhancements: native resolution, original geometry and timings, and no texture filtering/replacements or widescreen. Prefer PS1 hardware confirmation for disputed frames. Use fixed starting options and recorded input where possible. DuckStation is a comparison tool, not a dependency of the port.[3]
 2. Use jPSXdec on the original BIN to cross-check STR frame count, dimensions, XA channel IDs, duration, audio sync, and selected color/frame samples. Use PSXPrev to inspect supported textures/models as a second check; an unrecognized proprietary format does not prove an asset is absent.[1][2]
 3. Align reference and Switch captures by game event and field/frame, then compare the unscaled active picture. Check CLUT, texture affine behavior, primitive ordering, quantization, dither, blend, crop, and bars. Require matching stable menu and loading landmarks; document any approved timing or display-conversion tolerance instead of claiming pixel identity from screenshots alone.

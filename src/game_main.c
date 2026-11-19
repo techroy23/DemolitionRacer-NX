@@ -261,6 +261,12 @@ void sub_80015E38(void)
     sub_80041E24(0x800102A0u);
     sub_8002B88C(r_u32(0x80065238u), 0x800102ACu);
     sub_8002B6CC();
+#if defined(AP_SWITCH)
+    /* Native VBlank is cooperative. Give the registered loading callback two
+       new fields before the front end can clear its original VRAM artwork. */
+    if (VSync(0) >= 0)
+        VSync(2);
+#endif
     sub_8001C958();
     sub_8003BC14();
     sub_8003AAFC(1u);
@@ -272,6 +278,10 @@ void sub_80015E38(void)
         if (r_u32(0x80064C20u) == 0u)
         {
             sub_8004225C((const char *)psx_addr(0x800102BCu, 1u), r_u32(0x80010004u), 0x64000u);
+#if defined(AP_SWITCH)
+            /* Service any fields elapsed during the synchronous overlay read. */
+            psx_native_poll_events();
+#endif
             if (r_u32(0x80064B64u) == 0u)
             {
                 dr_overlay_call(0x8008FD38u);

@@ -3,6 +3,17 @@
 
 int main(void)
 {
+    FramebufferViewport movie = framebuffer_movie_viewport(1280, 720, 320, 208);
+    assert(movie.x == 86 && movie.y == 0 && movie.width == 1107 && movie.height == 720);
+    movie = framebuffer_movie_viewport(1280, 720, 320, 240);
+    assert(movie.x == 160 && movie.y == 0 && movie.width == 960 && movie.height == 720);
+    assert(framebuffer_movie_viewport(1280, 720, 320, 0).width == 0);
+    uint32_t movie_output[8 * 6];
+    const uint32_t movie_source[] = {0x00112233, 0x00445566};
+    assert(framebuffer_blit_movie(movie_output, 8, 8, 6, movie_source, 2, 1,
+                                  (FramebufferSource){0, 0, 2, 1}, NULL));
+    assert(movie_output[0] == 0xff000000u && movie_output[5 * 8 + 7] == 0xff000000u);
+    assert(movie_output[8] == 0xff112233u && movie_output[4 * 8 + 7] == 0xff445566u);
     const uint32_t original[] = {0x00000000, 0x00ff0000, 0x0000ff00, 0x000000ff};
     uint32_t output[14 * 6] = {0};
     uint32_t visible_colors = 0;
