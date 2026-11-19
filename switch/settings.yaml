@@ -7,3 +7,8 @@ FPS_OVERLAY: false
 UPSCALE: FIT
 # NEAREST keeps the original pixels; BILINEAR softens the race image and HUD.
 DISPLAY_FILTER: NEAREST
+# The worker is used only with BILINEAR; otherwise there is no extra thread.
+DISPLAY_WORKER: false
+# Try one geometry option at a time with NEAREST as the baseline.
+CAR_LOD: STOCK
+TRACK_DISTANCE: STOCK

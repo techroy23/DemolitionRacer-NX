@@ -22,11 +22,11 @@ const char *diagnostics_level_name(DiagnosticLevel level)
 
 bool diagnostics_parse_settings(FILE *settings, DiagnosticSettings *configuration)
 {
-    *configuration = (DiagnosticSettings){DIAGNOSTICS_INFO, false, 0, FRAMEBUFFER_FILTER_NEAREST};
+    *configuration = (DiagnosticSettings){.level = DIAGNOSTICS_INFO, .display_filter = FRAMEBUFFER_FILTER_NEAREST};
     DiagnosticSettings parsed = *configuration;
     if (!settings)
         return true;
-    const char *keys[] = {"LOG", "FPS_OVERLAY", "UPSCALE", "DISPLAY_FILTER"};
+    const char *keys[] = {"LOG", "FPS_OVERLAY", "UPSCALE", "DISPLAY_FILTER", "DISPLAY_WORKER", "CAR_LOD", "TRACK_DISTANCE"};
     unsigned defined = 0;
     bool first_line = true;
     char line[256];
@@ -85,6 +85,19 @@ bool diagnostics_parse_settings(FILE *settings, DiagnosticSettings *configuratio
             case 3:
                 if (!strcmp(value, "BILINEAR")) parsed.display_filter = FRAMEBUFFER_FILTER_BILINEAR;
                 else if (strcmp(value, "NEAREST")) return false;
+                break;
+            case 4:
+                if (!strcmp(value, "true")) parsed.display_worker = true;
+                else if (strcmp(value, "false")) return false;
+                break;
+            case 5:
+            case 6:
+                if (!strcmp(value, "EXTENDED"))
+                {
+                    if (field == 5) parsed.car_lod_extended = true;
+                    else parsed.track_distance_extended = true;
+                }
+                else if (strcmp(value, "STOCK")) return false;
                 break;
         }
         defined |= 1u << field;

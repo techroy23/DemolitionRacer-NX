@@ -12,6 +12,58 @@ void game_800AB380(uint32 object);
 void game_800AB0D8(uint32 object);
 void game_800AE264(uint32 object);
 
+#if defined(AP_SWITCH)
+extern sint32 switch_extra_track_section(void);
+extern void switch_record_track_stream(uint32 requested, uint32 occupied, uint32 loaded, uint32 misses, uint64 duration_us);
+extern void switch_record_track_extension(uint32 submitted_objects, uint32 packet_bytes);
+extern uint32 scene_8004FDDC(uint32 packet);
+extern uint32 track_extra_packets(uint32 index, uint32 bytes);
+
+static sint32 track_forward_section(sint16 track, sint32 sections)
+{
+    sint32 section;
+    if (sections <= 7)
+        return -1;
+    section = ((track + 6) / 12 + 3) % sections;
+    return section < 0 ? section + sections : section;
+}
+
+/* Far renderer: one packet per face, at most 52 bytes, no subdivision.
+ * Charge one extra face for speculative writes on a rejected last face. */
+static uint32 track_packet_bound(uint32 object, uint32 end, uint32 budget)
+{
+    uint32 stream, vertices, faces = 1;
+    if (object > end || end - object < 52u || budget <= 1u)
+        return 0;
+    stream = r_u32(object + 48u);
+    vertices = r_u32(object + 44u);
+    if (stream > end - object || vertices > end - object)
+        return 0;
+    stream += object;
+    vertices += object;
+    while (end - stream >= 4u)
+    {
+        uint32 count = r_u16(stream), kind = r_u8(stream + 2u), stride, i, j, indices, corners;
+        if (!count)
+            return faces > 1u ? faces : 0u;
+        if (kind > 3u || count > budget - faces)
+            return 0;
+        stream += 4u;
+        stride = kind == 0u ? 20u : kind == 3u ? 28u : 24u;
+        if (count > (end - stream) / stride)
+            return 0;
+        indices = (kind & 1u) ? 12u : 10u;
+        corners = (kind & 1u) ? 4u : 3u;
+        for (i = 0; i < count; ++i, stream += stride)
+            for (j = 0; j < corners; ++j)
+                if ((uint32)r_u8(stream + indices + j) * 8u + 6u > end - vertices)
+                    return 0;
+        faces += count;
+    }
+    return 0;
+}
+#endif
+
 static sint32 scene_div(sint32 first, sint32 second)
 {
     if (!second || (first == INT_MIN && second == -1))
@@ -27,6 +79,10 @@ static sint32 scene_remainder(sint32 first, sint32 second)
 
 void game_800B8DB8(uint32 port, sint32 track, sint32 progress)
 {
+#if defined(AP_SWITCH)
+    uint64 start_us = xport_timer_get();
+    uint32 occupied = 0u, loaded = 0u, retiring = 0u;
+#endif
     sint32 sections = scene_div((sint32)(r_u32(0x800653A4u) + 11u), 12);
     sint32 center = scene_div((sint32)((uint32)track + 6u), 12);
     sint32 radius = r_u32(0x80064C14u) ? 2 : 3;
@@ -56,7 +112,16 @@ void game_800B8DB8(uint32 port, sint32 track, sint32 progress)
                 if ((sint16)r_u16(slot + 6u) == (sint32)r_u32(0x800C7D68u + (uint32)j * 4u))
                     ++found;
             if (!found)
+            {
                 w_u8(slot + 8u, 3u);
+#if defined(AP_SWITCH)
+                ++retiring;
+#endif
+            }
+#if defined(AP_SWITCH)
+            else
+                ++occupied;
+#endif
         }
     }
     for (section = begin; section != end; section = scene_remainder(section + 1, sections), progress = (sint32)((uint32)progress + 12u))
@@ -89,6 +154,10 @@ void game_800B8DB8(uint32 port, sint32 track, sint32 progress)
             source = r_u32(r_u32(0x800C7D5Cu) + (uint32)section * 4u + 4u);
             sub_80015074(source, buffer, (sint32)size);
             w_u8(slot + 8u, 2u);
+#if defined(AP_SWITCH)
+            ++occupied;
+            ++loaded;
+#endif
             w_u16(slot + 6u, (uint16)section);
             w_u16(slot + 4u, (uint16)track);
             game_800AA078(buffer + 4u);
@@ -112,12 +181,28 @@ void game_800B8DB8(uint32 port, sint32 track, sint32 progress)
             }
         }
     }
+#if defined(AP_SWITCH)
+    /* Misses are requested sections not fulfilled, including after an alloc failure. */
+    switch_record_track_stream((uint32)count, occupied + retiring, loaded,
+                             (uint32)count > occupied ? (uint32)count - occupied : 0u,
+                             xport_timer_get() - start_us);
+#endif
 }
+
+#if defined(AP_SWITCH)
+static void track_draw_far(uint32 buffer);
+#endif
 
 void game_800B9374(uint32 port)
 {
     sint32 translation[3];
     uint32 axis, i;
+#if defined(AP_SWITCH)
+    uint32 forward = 0;
+    sint32 section = -1;
+    if (port == 0u && !r_u32(0x80064C14u) && !r_u32(0x800593A8u) && switch_extra_track_section())
+        section = track_forward_section((sint16)r_u16(0x80066D6Eu), (sint32)r_u32(0x800C7D64u));
+#endif
     for (axis = 0; axis < 3; ++axis)
         translation[axis] = (sint32)r_u32(0x80081BB8u + axis * 4u);
     w_u32(0x80065170u, 0u);
@@ -129,12 +214,24 @@ void game_800B9374(uint32 port)
         xport_gte_write_control(axis, r_u32(0x80081BA4u + axis * 4u));
     for (i = 0; i < r_u32(0x800C7D60u) && (sint32)r_u32(0x800C7D60u) > 0; ++i)
     {
-        uint32 slot = 0x800C7DB0u + port * 12u + i * 24u, buffer = r_u32(slot), count = r_u32(buffer), j;
+        uint32 slot = 0x800C7DB0u + port * 12u + i * 24u, buffer, count, j;
         if (r_u8(slot + 8u) != 2u)
             continue;
+        buffer = r_u32(slot);
+        count = r_u32(buffer);
+#if defined(AP_SWITCH)
+        if (section >= 0 && (sint16)r_u16(slot + 6u) == section)
+            forward = buffer;
+#endif
         for (j = 0; j < count && (sint32)count > 0; ++j)
             sub_8004171C(buffer + r_u32(buffer + 724u + j * 4u), 16384);
     }
+#if defined(AP_SWITCH)
+    if (forward)
+        track_draw_far(forward);
+    else if (port == 0u && switch_extra_track_section())
+        switch_record_track_extension(0u, 0u);
+#endif
     for (axis = 0; axis < 3; ++axis)
         w_u32(0x80081BB8u + axis * 4u, (uint32)translation[axis]);
     w_u32(0x80065170u, 2u);
@@ -171,7 +268,7 @@ static void scene_rotate_long(const sint32 input[3], sint32 output[3])
         output[axis] = (sint32)(xport_gte_read_data(25u + axis) + ((uint32)rotated_high[axis] << 3));
 }
 
-void sub_8004171C(uint32 object, sint32 maximum)
+static sint32 scene_visible(uint32 object, sint32 maximum, sint32 minimum, sint32 *depth)
 {
     sint32 input[3], output[3], radius, term, side;
     uint32 axis;
@@ -179,8 +276,10 @@ void sub_8004171C(uint32 object, sint32 maximum)
         input[axis] = (sint32)(r_u32(object + 16u + axis * 4u) - r_u32(0x80081BB8u + axis * 4u));
     radius = (sint16)r_u16(object + 8u) >> (r_u32(0x80065170u) & 31u);
     scene_rotate_long(input, output);
-    if ((sint32)((uint32)output[2] + (uint32)radius) <= 0 || (sint32)((uint32)output[2] - (uint32)radius) >= maximum)
-        return;
+    if ((sint32)((uint32)output[2] + (uint32)radius) <= 0 ||
+        (sint32)((uint32)output[2] - (uint32)radius) >= maximum ||
+        (sint32)((uint32)output[2] - (uint32)radius) < minimum)
+        return 0;
     for (axis = 0; axis < 2; ++axis)
     {
         sint32 normal = (sint16)r_u16(axis ? 0x80065562u : 0x80065550u);
@@ -188,14 +287,106 @@ void sub_8004171C(uint32 object, sint32 maximum)
         term = (sint32)((uint32)output[2] * (uint32)depth);
         side = (sint32)((uint32)output[axis] * (uint32)normal + (uint32)term) >> 12;
         if (side >= radius)
-            return;
+            return 0;
         side = (sint32)((0u - (uint32)output[axis]) * (uint32)normal + (uint32)term) >> 12;
         if (side >= radius)
-            return;
+            return 0;
     }
-    w_u32(0x80065548u, (uint32)output[2]);
-    sub_800416E0(object);
+    *depth = output[2];
+    return 1;
 }
+
+void sub_8004171C(uint32 object, sint32 maximum)
+{
+    sint32 depth;
+    if (scene_visible(object, maximum, INT_MIN, &depth))
+    {
+        w_u32(0x80065548u, (uint32)depth);
+        sub_800416E0(object);
+    }
+}
+
+#if defined(AP_SWITCH)
+static void track_draw_far(uint32 buffer)
+{
+    /* Keep the stream window and object spawns unchanged. Draw farther geometry
+     * only from the forward-most resident section, after the stock pass. */
+    enum { PACKET_BYTES = 4096, FACE_BYTES = 52, OBJECT_LIMIT = 96 };
+    uint32 count, end, size, i, packets = 0, used = 0, budget = PACKET_BYTES / FACE_BYTES;
+    uint32 submitted_objects = 0, packet_bytes = 0;
+    uint32 saved_cursor = r_u32(0x80065570u), saved_limit = r_u32(0x8006554Cu);
+    uint32 table = r_u32(r_u32(0x80065118u) + 112u), entries = r_u32(0x800654F0u);
+    PsxGteContext saved_gte;
+    if (buffer < 0x80000010u || buffer > 0x801FFFFCu ||
+        (table != r_u32(0x80081AA8u) && table != r_u32(0x80081B1Cu)) ||
+        !table || entries != 0x1201u || !saved_limit || saved_limit > 32767u ||
+        r_u32(0x8004FCACu) != 0x8004FE90u || r_u32(0x8004FCB0u) != 0x8004FFDCu ||
+        r_u32(0x8004FCB4u) != 0x800501A8u || r_u32(0x8004FCB8u) != 0x80050348u)
+        goto report;
+    /* This resident allocation includes the decompressor's padding. */
+    size = r_u32(buffer - 4u);
+    if (!(size & 1u) || (size >> 1) > (0x80200000u - buffer + 16u) / 16u || (size >> 1) <= 1u)
+        goto report;
+    end = buffer + ((size >> 1) - 1u) * 16u;
+    count = r_u32(buffer);
+    if (end - buffer < 724u || count > (end - buffer - 724u) / 4u)
+        goto report;
+    psx_gte_save_context(&saved_gte);
+    for (i = 0; i < count && i < OBJECT_LIMIT && budget > 1u; ++i)
+    {
+        uint32 offset = r_u32(buffer + 724u + i * 4u), object, bound, target, limit;
+        sint32 depth, selector, bucket;
+        if (offset > end - buffer || end - buffer - offset < 52u)
+            continue;
+        object = buffer + offset;
+        if (!scene_visible(object, 20480, 16384, &depth))
+            continue;
+        selector = (sint16)r_u16(object + 10u);
+        if (selector < 0 || selector > 10)
+            continue;
+        target = r_u32(0x8005CD78u + (uint32)selector * 4u);
+        if (target != 0x8004FDDCu && target != 0x800456ACu)
+            continue;
+        bucket = (sint16)r_u16(object + 12u); /* Track draw uses shift zero. */
+        if (bucket < 0 || (uint32)bucket >= entries)
+            continue;
+        limit = entries - (uint32)bucket;
+        if (limit > saved_limit + 512u)
+            limit = saved_limit + 512u;
+        if (limit <= 1u)
+            continue;
+        bound = track_packet_bound(object, end, budget);
+        if (!bound)
+            continue;
+        if (!packets)
+        {
+            packets = track_extra_packets(table != r_u32(0x80081AA8u), PACKET_BYTES);
+            if (!packets)
+                break;
+        }
+        const uint32 packet_start = packets + used * FACE_BYTES;
+        w_u32(0x80065570u, packet_start);
+        w_u32(0x8006554Cu, limit);
+        scene_8004FDDC(object);
+        const uint32 emitted_bytes = r_u32(0x80065570u) - packet_start;
+        if (emitted_bytes)
+        {
+            ++submitted_objects;
+            packet_bytes += emitted_bytes;
+        }
+        budget -= bound;
+        used += bound;
+    }
+    if (packets)
+    {
+        w_u32(0x80065570u, saved_cursor);
+        w_u32(0x8006554Cu, saved_limit);
+    }
+    psx_gte_restore_context(&saved_gte);
+report:
+    switch_record_track_extension(submitted_objects, packet_bytes);
+}
+#endif
 
 uint32 sub_800418B4(uint32 object, sint32 maximum)
 {

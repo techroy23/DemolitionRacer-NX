@@ -30,6 +30,18 @@ int main(void)
     assert(!diagnostics_parse_settings(options, &config));
     fclose(options);
     assert(diagnostics_parse_settings(NULL, &config) && config.display_filter == FRAMEBUFFER_FILTER_NEAREST);
+    assert(!config.display_worker && !config.car_lod_extended && !config.track_distance_extended);
+    options = stream_with("DISPLAY_WORKER: true\nCAR_LOD: EXTENDED\nTRACK_DISTANCE: EXTENDED\n");
+    assert(diagnostics_parse_settings(options, &config));
+    assert(config.display_worker && config.car_lod_extended && config.track_distance_extended);
+    fclose(options);
+    options = stream_with("DISPLAY_WORKER: false\nCAR_LOD: STOCK\nTRACK_DISTANCE: STOCK\n");
+    assert(diagnostics_parse_settings(options, &config));
+    assert(!config.display_worker && !config.car_lod_extended && !config.track_distance_extended);
+    fclose(options);
+    options = stream_with("TRACK_DISTANCE: UNLIMITED\n");
+    assert(!diagnostics_parse_settings(options, &config));
+    fclose(options);
     options = stream_with("FPS_OVERLAY: false\nUPSCALE: x7\n");
     assert(!diagnostics_parse_settings(options, &config));
     assert(!config.fps_overlay && config.upscale == 0);

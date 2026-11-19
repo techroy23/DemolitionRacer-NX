@@ -1,11 +1,11 @@
 # Switch graphics and performance backlog
 
-Parked experiments. Keep the stock look and timing as defaults. Change one option at a time, keep `DATA/` and saves untouched, and use local test builds until the OLED results are reviewed.
+Local experiments are implemented; OLED checks remain open. Keep the stock look and timing as defaults. Change one option at a time, keep `DATA/` and saves untouched, and use local test builds until the OLED results are reviewed.
 
 ## Graphics
 
 - [ ] **Car LOD:** With `NEAREST` and stock draw distance, keep the original near car model visible slightly farther out. Trace the near-model effects separately. Count near/far draws and compare overhead on a crowded grid and during collisions.
-- [ ] **Track draw distance:** Measure section-cache occupancy, loads, allocation failures, and scene time first. Check visibility bounds, slot and packet capacity, and lap wraparound before trying a small extension. Test pop-in on long straights and timing in dense scenes.
+- [ ] **Track draw distance:** Test the bounded pass into already-loaded scenery on long straights and around lap wraparound. Check `Race track extension` for nonzero geometry and compare section-cache stats and frame times. Extending section streaming itself remains future work.
 - [ ] **Smoothing:** Keep `NEAREST` as the baseline. The OLED bilinear run averaged 10.9 ms per blit and 38.1 submissions/sec, so the current scalar filter is not a candidate for the default. Reuse horizontally blended rows and measure before adding threads.
 
 ## Parallel work

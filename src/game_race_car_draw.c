@@ -152,7 +152,12 @@ uint32 sub_80017820(uint32 player)
     components.vz = values[2];
     Square0(&components, &components);
     distance = (uint32)components.vx + (uint32)components.vy + (uint32)components.vz;
-    if ((sint32)distance < (sint32)R32(0x80065258u))
+    uint32 near_model_limit = R32(0x80065258u);
+#if defined(AP_SWITCH)
+    extern uint32 switch_car_lod_limit(uint32 stock_limit);
+    near_model_limit = switch_car_lod_limit(near_model_limit);
+#endif
+    if ((sint32)distance < (sint32)near_model_limit)
     {
         model = R32(object + 24u);
         R32(model + 16u) = R32(object + 100u);
@@ -164,6 +169,10 @@ uint32 sub_80017820(uint32 player)
         game_8009E320(object);
         sub_8003CED8((const MATRIX *)psx_addr(object + 148u, sizeof(MATRIX)), model);
         sub_800416E0(model);
+#if defined(AP_SWITCH)
+        extern void switch_record_car_lod(int near_model);
+        switch_record_car_lod(1);
+#endif
         sub_8001896C(player);
         sub_800340F0(player, object);
         if (R8(object + 940u))
@@ -183,6 +192,10 @@ uint32 sub_80017820(uint32 player)
         game_8009E320(object);
         sub_8003CED8((const MATRIX *)psx_addr(object + 148u, sizeof(MATRIX)), model);
         sub_800416E0(model);
+#if defined(AP_SWITCH)
+        extern void switch_record_car_lod(int near_model);
+        switch_record_car_lod(0);
+#endif
         if (R32(0x80065110u) == 1u || R32(0x80064B5Cu))
         {
             sub_8001896C(player);

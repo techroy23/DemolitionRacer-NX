@@ -31,6 +31,11 @@ static bool race_display_active;
 static uint64 race_display_start, race_display_start_frames, race_display_start_failures;
 static uint64 race_blit_samples, race_blit_total_us, race_blit_peak_us;
 static uint32 race_start_audio_overruns;
+static uint32 race_near_models, race_far_models, track_samples, track_requested_peak;
+static uint32 track_occupied_peak, track_loads, track_misses;
+static uint64 track_time, track_peak;
+static uint64 track_extension_attempts, track_extension_hits, track_extension_objects, track_extension_bytes;
+static uint64 worker_frames, worker_wait_total, worker_wait_peak;
 static FILE *diagnostic_log;
 static DiagnosticLevel diagnostic_threshold = DIAGNOSTICS_INFO;
 static unsigned debug_lines;
@@ -72,6 +77,163 @@ static const char *display_filter_name(FramebufferFilter filter)
     return filter == FRAMEBUFFER_FILTER_BILINEAR ? "BILINEAR" : "NEAREST";
 }
 
+uint32 switch_car_lod_limit(uint32 stock_limit)
+{
+    if (!race_display_active || !game_settings.car_lod_extended || stock_limit > INT32_MAX)
+        return stock_limit;
+    // The renderer compares squared distance: a 10% radius increase uses 1.21.
+    const uint64 extended_limit = (uint64)stock_limit * 121u / 100u;
+    return extended_limit > INT32_MAX ? INT32_MAX : (uint32)extended_limit;
+}
+
+void switch_record_car_lod(int near_model)
+{
+    if (!race_display_active) return;
+    if (near_model) ++race_near_models;
+    else ++race_far_models;
+}
+
+sint32 switch_extra_track_section(void)
+{
+    return race_display_active && game_settings.track_distance_extended ? 1 : 0;
+}
+
+void switch_record_track_stream(uint32 requested, uint32 occupied, uint32 loaded, uint32 misses, uint64 duration_us)
+{
+    if (!race_display_active) return;
+    ++track_samples;
+    if (requested > track_requested_peak) track_requested_peak = requested;
+    if (occupied > track_occupied_peak) track_occupied_peak = occupied;
+    track_loads += loaded;
+    track_misses += misses;
+    track_time += duration_us;
+    if (duration_us > track_peak) track_peak = duration_us;
+}
+
+typedef struct {
+    uint32_t *destination;
+    const uint32_t *source;
+    size_t stride;
+    int32_t width, height, source_width, source_height;
+    FramebufferSource crop;
+    unsigned upscale;
+} DisplayJob;
+
+void switch_record_track_extension(uint32 submitted_objects, uint32 packet_bytes)
+{
+    ++track_extension_attempts;
+    if (submitted_objects) ++track_extension_hits;
+    track_extension_objects += submitted_objects;
+    track_extension_bytes += packet_bytes;
+}
+
+static Thread display_worker_thread;
+static Mutex display_worker_mutex;
+static CondVar display_worker_request, display_worker_completion;
+static bool display_worker_started, display_worker_stopping, display_job_pending;
+static DisplayJob display_worker_job;
+static bool display_worker_copied;
+static uint32_t display_worker_colors;
+static uint32_t display_worker_core;
+
+static void display_worker_main(void *context)
+{
+    (void)context;
+    mutexLock(&display_worker_mutex);
+    while (!display_worker_stopping)
+    {
+        while (!display_job_pending && !display_worker_stopping)
+            condvarWait(&display_worker_request, &display_worker_mutex);
+        if (display_worker_stopping) break;
+        const DisplayJob job = display_worker_job;
+        mutexUnlock(&display_worker_mutex);
+        uint32_t colors = 0;
+        const bool copied = framebuffer_blit_bilinear_band(job.destination, job.stride, job.width, job.height,
+            job.source, job.source_width, job.source_height, job.crop, job.upscale, job.height / 2, job.height, &colors);
+        const uint32_t core = svcGetCurrentProcessorNumber();
+        mutexLock(&display_worker_mutex);
+        display_worker_copied = copied;
+        display_worker_colors = colors;
+        display_worker_core = core;
+        display_job_pending = false;
+        condvarWakeOne(&display_worker_completion);
+    }
+    mutexUnlock(&display_worker_mutex);
+}
+
+static void start_display_worker(void)
+{
+    u64 core_mask = 0;
+    const Result mask_result = svcGetInfo(&core_mask, InfoType_CoreMask, CUR_PROCESS_HANDLE, 0);
+    const uint32_t main_core = svcGetCurrentProcessorNumber();
+    switch_log(DIAGNOSTICS_INFO, "Display cores: main=%u allowed=0x%llx mask-result=0x%08x",
+               (unsigned)main_core, (unsigned long long)core_mask, (unsigned)mask_result);
+    if (!game_settings.display_worker || game_settings.display_filter != FRAMEBUFFER_FILTER_BILINEAR)
+        return;
+    const u64 candidates = R_SUCCEEDED(mask_result) && main_core < 64 ? core_mask & ~(UINT64_C(1) << main_core) : 0;
+    if (!candidates)
+    {
+        switch_log(DIAGNOSTICS_INFO, "Display worker: serial fallback; no alternate core available");
+        return;
+    }
+    // Prefer the application's lower-numbered cores rather than core 3.
+    const int selected_core = __builtin_ctzll(candidates);
+    mutexInit(&display_worker_mutex);
+    condvarInit(&display_worker_request);
+    condvarInit(&display_worker_completion);
+    Result result = threadCreate(&display_worker_thread, display_worker_main, NULL, NULL, 0x10000, 0x2c, selected_core);
+    if (R_SUCCEEDED(result))
+    {
+        result = threadStart(&display_worker_thread);
+        if (R_FAILED(result)) threadClose(&display_worker_thread);
+    }
+    display_worker_started = R_SUCCEEDED(result);
+    switch_log(DIAGNOSTICS_INFO, "Display worker: %s; requested-core=%d result=0x%08x",
+               display_worker_started ? "ready" : "serial fallback", selected_core, (unsigned)result);
+}
+
+static void stop_display_worker(void)
+{
+    if (!display_worker_started) return;
+    mutexLock(&display_worker_mutex);
+    display_worker_stopping = true;
+    condvarWakeOne(&display_worker_request);
+    mutexUnlock(&display_worker_mutex);
+    const Result result = threadWaitForExit(&display_worker_thread);
+    const Result close_result = R_SUCCEEDED(result) ? threadClose(&display_worker_thread) : result;
+    switch_log(R_SUCCEEDED(close_result) ? DIAGNOSTICS_INFO : DIAGNOSTICS_ERROR,
+               "Display worker: stop; join=0x%08x close=0x%08x", (unsigned)result, (unsigned)close_result);
+    display_worker_started = false;
+}
+
+static bool blit_with_display_worker(DisplayJob job, uint32_t *visible_colors)
+{
+    mutexLock(&display_worker_mutex);
+    display_worker_job = job;
+    display_job_pending = true;
+    condvarWakeOne(&display_worker_request);
+    mutexUnlock(&display_worker_mutex);
+
+    uint32_t main_colors = 0;
+    const bool copied = framebuffer_blit_bilinear_band(job.destination, job.stride, job.width, job.height,
+        job.source, job.source_width, job.source_height, job.crop, job.upscale, 0, job.height / 2, &main_colors);
+    const uint64 wait_start = xport_timer_get();
+    mutexLock(&display_worker_mutex);
+    while (display_job_pending)
+        condvarWait(&display_worker_completion, &display_worker_mutex);
+    const bool worker_copied = display_worker_copied;
+    *visible_colors = main_colors | display_worker_colors;
+    mutexUnlock(&display_worker_mutex);
+    const uint64 wait_time = xport_timer_get() - wait_start;
+    if (!copied || !worker_copied)
+        return framebuffer_blit_filtered(job.destination, job.stride, job.width, job.height, job.source,
+            job.source_width, job.source_height, job.crop, job.upscale, FRAMEBUFFER_FILTER_BILINEAR, visible_colors);
+    ++worker_frames;
+    worker_wait_total += wait_time;
+    if (wait_time > worker_wait_peak) worker_wait_peak = wait_time;
+    return true;
+}
+
 void switch_set_race_display_active(bool active)
 {
     if (race_display_active == active)
@@ -83,6 +245,11 @@ void switch_set_race_display_active(bool active)
         race_display_start_frames = presented_frames;
         race_display_start_failures = failed_frames;
         race_blit_samples = race_blit_total_us = race_blit_peak_us = 0;
+        worker_frames = worker_wait_total = worker_wait_peak = 0;
+        race_near_models = race_far_models = track_samples = track_requested_peak = 0;
+        track_occupied_peak = track_loads = track_misses = 0;
+        track_time = track_peak = 0;
+        track_extension_attempts = track_extension_hits = track_extension_objects = track_extension_bytes = 0;
         race_start_audio_overruns = g_xport_audio_callback_overruns;
         switch_log(DIAGNOSTICS_INFO, "Race display: begin; filter=%s output=%dx%d upscale=%u",
                    display_filter_name(game_settings.display_filter), (int)display_width, (int)display_height,
@@ -99,6 +266,19 @@ void switch_set_race_display_active(bool active)
                    (unsigned long long)(race_blit_samples ? race_blit_total_us / race_blit_samples : 0),
                    (unsigned long long)race_blit_peak_us,
                    (unsigned)(g_xport_audio_callback_overruns - race_start_audio_overruns));
+        switch_log(DIAGNOSTICS_INFO, "Race geometry: car-lod=%s near-draws=%u far-draws=%u track-distance=%s track-samples=%u wanted-peak=%u occupied-peak=%u section-loads=%u misses=%u stream-avg-us=%llu stream-max-us=%llu",
+                   game_settings.car_lod_extended ? "EXTENDED" : "STOCK", (unsigned)race_near_models, (unsigned)race_far_models,
+                   game_settings.track_distance_extended ? "EXTENDED" : "STOCK", (unsigned)track_samples,
+                   (unsigned)track_requested_peak, (unsigned)track_occupied_peak, (unsigned)track_loads, (unsigned)track_misses,
+                   (unsigned long long)(track_samples ? track_time / track_samples : 0), (unsigned long long)track_peak);
+        if (game_settings.track_distance_extended)
+            switch_log(DIAGNOSTICS_INFO, "Race track extension: attempts=%llu with-extra-geometry=%llu submitted-objects=%llu packet-bytes=%llu",
+                       (unsigned long long)track_extension_attempts, (unsigned long long)track_extension_hits,
+                       (unsigned long long)track_extension_objects, (unsigned long long)track_extension_bytes);
+        if (display_worker_started)
+            switch_log(DIAGNOSTICS_INFO, "Race display worker: frames=%llu main-core=%u worker-core=%u wait-avg-us=%llu wait-max-us=%llu",
+                       (unsigned long long)worker_frames, (unsigned)svcGetCurrentProcessorNumber(), (unsigned)display_worker_core,
+                       (unsigned long long)(worker_frames ? worker_wait_total / worker_frames : 0), (unsigned long long)worker_wait_peak);
     }
 }
 
@@ -154,8 +334,9 @@ static void start_diagnostics(void)
         switch_log(DIAGNOSTICS_ERROR, "Invalid settings.yaml; using LOG=INFO FPS_OVERLAY=false UPSCALE=FIT DISPLAY_FILTER=NEAREST");
     else if (settings_error && settings_error != ENOENT)
         switch_log(DIAGNOSTICS_ERROR, "Could not read settings.yaml (errno=%d); using INFO", settings_error);
-    switch_log(DIAGNOSTICS_INFO, "Display experiment: DISPLAY_FILTER=%s; scope=race; movies, loading and frontend use nearest",
-               display_filter_name(game_settings.display_filter));
+    switch_log(DIAGNOSTICS_INFO, "Graphics experiment: DISPLAY_FILTER=%s DISPLAY_WORKER=%s CAR_LOD=%s TRACK_DISTANCE=%s; scope=race",
+               display_filter_name(game_settings.display_filter), game_settings.display_worker ? "true" : "false",
+               game_settings.car_lod_extended ? "EXTENDED" : "STOCK", game_settings.track_distance_extended ? "EXTENDED" : "STOCK");
 }
 
 void switch_record_collision_response(uint64 duration_microseconds)
@@ -567,7 +748,10 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
     if (stride_bytes % sizeof(*destination) == 0)
     {
         size_t stride = stride_bytes / sizeof(*destination);
-        copied = movie ? framebuffer_blit_movie(destination, stride, display_width, display_height,
+        if (filter == FRAMEBUFFER_FILTER_BILINEAR && display_worker_started && destination)
+            copied = blit_with_display_worker((DisplayJob){destination, pixels, stride, display_width, display_height,
+                bitmap_width, bitmap_height, crop, game_settings.upscale}, &visible_colors);
+        else copied = movie ? framebuffer_blit_movie(destination, stride, display_width, display_height,
                                                 pixels, bitmap_width, bitmap_height, crop, &visible_colors)
                        : framebuffer_blit_filtered(destination, stride, display_width, display_height,
                                                  pixels, bitmap_width, bitmap_height, crop,
@@ -1111,6 +1295,7 @@ int main(void)
     if (setjmp(game_exit) == 0)
     {
         game_running = true;
+        start_display_worker();
         pump_applet();
         show_startup_splash();
         switch_log(DIAGNOSTICS_INFO, "Entering reconstructed PS1 game code");
@@ -1118,6 +1303,7 @@ int main(void)
     }
     game_running = false;
     switch_set_race_display_active(false);
+    stop_display_worker();
     switch_log(DIAGNOSTICS_INFO, "Video totals: requested=%llu submitted=%llu nonblack=%llu failed=%llu; audio buffers=%u overruns=%u",
                (unsigned long long)present_attempts, (unsigned long long)presented_frames,
                (unsigned long long)nonblack_frames, (unsigned long long)failed_frames,

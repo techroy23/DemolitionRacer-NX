@@ -1458,10 +1458,38 @@ static uint32 race_count_product_high(uint32 value)
     return (uint32)((uint64_t)product >> 32);
 }
 
+#if defined(AP_SWITCH)
+static uint32 track_packets;
+
+uint32 track_extra_packets(uint32 index, uint32 bytes)
+{
+    enum { MIN_FREE = 32768 };
+    uint32 both = 2u * bytes;
+    if (index > 1u || bytes != 4096u)
+        return 0;
+    if (!track_packets)
+    {
+        uint32 heap = r_u32(0x80065184u), block;
+        if (!heap || r_u32(heap + 8u) < both + 16u + MIN_FREE)
+            return 0;
+        block = r_u32(r_u32(heap));
+        /* Do not enter the stock allocator's search/OOM loop for optional work. */
+        if ((sint32)r_u32(block + 4u) < (sint32)(both / 16u + 1u))
+            return 0;
+        track_packets = sub_80042544(both);
+    }
+    return track_packets ? track_packets + index * bytes : 0u;
+}
+#endif
+
 /* Full original GAME B88D0 circuit relocation and paired object slots */
 uint32 game_800B88D0(void)
 {
     uint32 base, index = 1u, entry, value, high, result, record;
+#if defined(AP_SWITCH)
+    /* The race heap was reinitialized before loading this circuit. */
+    track_packets = 0;
+#endif
     w_u32(0x800BFAD8u, r_u32(0x800593A8u) == 1u ? 35u : 47u);
     race_load_circuit();
     base = r_u32(0x800C7D58u);

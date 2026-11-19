@@ -19,6 +19,7 @@ typedef struct {
     bool fps_overlay;
     unsigned upscale;
     FramebufferFilter display_filter;
+    bool display_worker, car_lod_extended, track_distance_extended;
 } DiagnosticSettings;
 
 bool diagnostics_parse_settings(FILE *settings, DiagnosticSettings *configuration);
