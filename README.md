@@ -42,6 +42,22 @@ Your Switch must already be able to open the Homebrew Menu.
 
 If something breaks, share the dated `.log` file next to the NRO and say what was on screen when it happened. Keep your disc dump and generated `DATA` files private.
 
+## Settings (`settings.yaml`)
+
+Copy the [settings template](switch/settings.yaml) from the source ZIP, or download the [raw file](https://raw.githubusercontent.com/techroy23/DemolitionRacer-NX/main/switch/settings.yaml). Save it as `switch/DemolitionRacer/settings.yaml` on the SD card, beside `DemolitionRacer.nro`. Edit it in a text editor, then close and relaunch the game. The file is optional; the app uses built-in defaults if it is missing.
+
+| Setting | What it does |
+| --- | --- |
+| `UPSCALE` | `FIT` (default), `x2`, `x3`, or `x4`. Set `UPSCALE: x4` for a centered 1280×960 game image on a supported 1080p docked display. The 720p path caps it at `x3`. |
+| `DISPLAY_FILTER` | `NEAREST` (default) keeps sharp pixels. `BILINEAR` softens the race image and HUD only. |
+| `DISPLAY_WORKER` | `false` (default) or `true`. Can split software bilinear scaling across two cores; GPU scaling does not use it. |
+| `CAR_LOD` | `STOCK` (default) or `EXTENDED` to keep the original near-car model visible a little farther away. |
+| `TRACK_DISTANCE` | `STOCK` (default) or `EXTENDED` to draw more of the already-loaded track where supported. |
+| `FPS_OVERLAY` | `false` (default) or `true`. Shows display submissions per second, not unique game frames. |
+| `LOG` | `INFO` by default without the file. The template uses `DEBUG` for troubleshooting; `ERROR` logs only errors. |
+
+When updating, replace only the NRO and keep your existing `settings.yaml`, `DATA/`, and `SAVE/`. Missing settings use their defaults, so you can add new options without replacing the file.
+
 ## More information
 
 The Switch Homebrew Menu icon and launcher splash artwork were sourced from [Demolition Racer on SteamGridDB](https://www.steamgriddb.com/game/5270215). These are separate from the original in-game loading screen, which comes from your disc dump.

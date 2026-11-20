@@ -9,6 +9,7 @@ This is an unofficial native homebrew port of the US PlayStation release of *Dem
 
 ## Version history
 
+- Version `0.2.3` adds GPU scaling for docked `x4`, RAM preloading for the opening movies and selected race assets, and three disc rotations when returning to the menu. Race smoothing and longer draw distances are optional; the default keeps the stock look.
 - Version `0.2.2` gives the original track loading screen three disc rotations before race setup, matching the boot hold from `0.2.1`.
 - Version `0.2.1` improves boot movie transitions and shows the original boot loading disc for three rotations.
 - Version `0.2.0` established the development baseline and set `An2Kin` as the port author in the Switch Homebrew Menu. Upstream credits remain below.

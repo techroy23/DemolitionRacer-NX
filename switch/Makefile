@@ -25,7 +25,7 @@ XPORT ?= $(GAME)/xport
 RUNTIME := $(XPORT)/src
 BUILD := build
 NAME := DemolitionRacer
-VERSION := 0.2.2
+VERSION := 0.2.3
 PYTHON ?= python
 BINARY := $(BUILD)/$(NAME)
 BUILD_MAKEFILE := $(firstword $(MAKEFILE_LIST))
@@ -56,7 +56,7 @@ GAME_SOURCES := \
  game_race_ai_recovery_route.c game_race_ai_special_motion.c game_race_ai_special_contact.c game_movie_boot.c \
  game_movie_controller.c game_movie_sdk.c
 
-# Reuse the PSX software GPU; Switch presents its pixels directly through libnx.
+# Reuse the PSX software GPU; Switch presents its pixels through libnx or GLES.
 RUNTIME_SOURCES := psx.c psx_gpu.c psx_font.c psx_spu.c psx_seq.c psx_xa.c \
  psx_mdec.c psx_press.c psx_vlc.c psx_stream.c xport_fmv.c xport_trace.c
 GAME_OBJS := $(GAME_SOURCES:%.c=$(BUILD)/game/%.o)

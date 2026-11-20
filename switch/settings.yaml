@@ -3,11 +3,11 @@
 LOG: DEBUG
 # The FPS counter measures Switch framebuffer submissions, not unique game frames.
 FPS_OVERLAY: false
-# FIT (default), x2 (640x480), x3 (960x720), or x4 (1280x960 where supported).
+# FIT (default), x2 (640x480), x3 (960x720), or x4 (1280x960 on supported 1080p docks).
 UPSCALE: FIT
 # NEAREST keeps the original pixels; BILINEAR softens the race image and HUD.
 DISPLAY_FILTER: NEAREST
-# The worker is used only with BILINEAR; otherwise there is no extra thread.
+# The worker helps software BILINEAR scaling. Docked GPU x4 does not use it.
 DISPLAY_WORKER: false
 # Try one geometry option at a time with NEAREST as the baseline.
 CAR_LOD: STOCK
