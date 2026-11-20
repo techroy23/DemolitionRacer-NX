@@ -7,6 +7,8 @@
 #include <sys/stat.h>
 #include "diagnostics.h"
 #include "framebuffer_blit.h"
+#include "asset_preload.h"
+#include "docked_presenter.h"
 
 #define XPORT_NO_PSYQ_CRITICAL_SECTION
 #include "psx_spu.h"
@@ -26,6 +28,9 @@ static jmp_buf game_exit;
 static XportCleanup cleanup_handler;
 static int display_width = 1280, display_height = 720;
 static Framebuffer switch_framebuffer;
+static bool docked_gpu_active, docked_gpu_attempted;
+static const char *asset_preload_phase;
+static unsigned asset_preload_hits;
 static uint64 present_attempts, presented_frames, failed_frames, nonblack_frames;
 static bool race_display_active;
 static uint64 race_display_start, race_display_start_frames, race_display_start_failures;
@@ -349,6 +354,72 @@ void switch_record_collision_response(uint64 duration_microseconds)
         collision_response_peak = duration_microseconds;
 }
 
+static void start_asset_preload(const char *phase, const char *const *paths, size_t count, size_t budget)
+{
+    AppletType applet_type = appletGetAppletType();
+    if (applet_type != AppletType_Application && applet_type != AppletType_SystemApplication)
+    {
+        switch_log(DIAGNOSTICS_INFO, "Asset preload %s: skipped in applet mode", phase);
+        return;
+    }
+    if (!asset_preload_start(paths, count, budget))
+    {
+        switch_log(DIAGNOSTICS_INFO, "Asset preload %s: unavailable; using SD", phase);
+        return;
+    }
+    asset_preload_phase = phase;
+    asset_preload_hits = 0;
+}
+
+void switch_join_asset_preload(void)
+{
+    if (!asset_preload_phase)
+        return;
+    AssetPreloadStats statistics;
+    asset_preload_cancel();
+    if (!asset_preload_join(&statistics))
+    {
+        switch_log(DIAGNOSTICS_ERROR, "Asset preload %s: join failed; using SD", asset_preload_phase);
+        return;
+    }
+    switch_log(DIAGNOSTICS_INFO, "Asset preload %s: cached=%zu/%zu bytes=%zu budget=%zu failed=%zu cancelled=%zu budget-skipped=%zu worker-us=%llu join-us=%llu",
+               asset_preload_phase, statistics.cached_count, statistics.requested_count,
+               statistics.cached_bytes, statistics.budget_bytes, statistics.failed_count,
+               statistics.cancelled_count, statistics.budget_skipped_count,
+               (unsigned long long)(statistics.worker_elapsed_ns / 1000),
+               (unsigned long long)(statistics.join_wait_ns / 1000));
+}
+
+void switch_clear_asset_preload(void)
+{
+    if (!asset_preload_phase)
+        return;
+    if (!asset_preload_clear())
+    {
+        switch_log(DIAGNOSTICS_ERROR, "Asset preload %s: cleanup failed", asset_preload_phase);
+        return;
+    }
+    switch_log(DIAGNOSTICS_INFO, "Asset preload %s: cleared; RAM opens=%u", asset_preload_phase, asset_preload_hits);
+    asset_preload_phase = NULL;
+}
+
+void switch_start_race_preload(unsigned level, unsigned circuit, unsigned sky)
+{
+    if (level < 1 || level > 29 || circuit < 1 || circuit > 29)
+        return;
+    char stream_path[48], level_path[48], circuit_path[48], sky_path[48], left_path[48], right_path[48];
+    snprintf(stream_path, sizeof(stream_path), "DATA/LEVEL%u/STREAM.VRM", level);
+    snprintf(level_path, sizeof(level_path), "DATA/LEVEL%u/LEVEL.DAT", level);
+    snprintf(circuit_path, sizeof(circuit_path), "DATA/LEVEL%u/CIR%u.DAT", level, circuit);
+    snprintf(sky_path, sizeof(sky_path), "DATA/LEVEL%u/SKY%u.DAT", level, sky);
+    snprintf(left_path, sizeof(left_path), "DATA/LEVEL%u/LEFT.TRK", level);
+    snprintf(right_path, sizeof(right_path), "DATA/LEVEL%u/RIGHT.TRK", level);
+    const char *const paths[] = {stream_path, level_path, circuit_path, sky_path, left_path, right_path,
+        "DATA/STATIC/STATIC.VRM", "DATA/STATIC/STATIC.DAT", "DATA/CARS/LOGOS.DAT", "DATA/PRES/INFO.TIM",
+        "DATA/ANIMS/PIPEIN.GRR", "DATA/ANIMS/PIPEOUT.GRR", "DATA/ANIMS/SAIL.GRR"};
+    start_asset_preload("race", paths, sizeof(paths) / sizeof(paths[0]), 8u * 1024u * 1024u);
+}
+
 void switch_hold_loading_screen(const char *screen_name)
 {
     // Three turns at the original callback's 64 angle units per field.
@@ -662,6 +733,20 @@ void xport_set_function_key_handler(XportFunctionKeyHandler handler)
     (void)handler;
 }
 
+static void log_docked_presenter(const char *message, void *user_data)
+{
+    (void)user_data;
+    switch_log(DIAGNOSTICS_INFO, "Docked GPU: %s", message);
+}
+
+static void fall_back_to_software_display(void)
+{
+    docked_presenter_close();
+    docked_gpu_active = false;
+    video_initialized = false;
+    switch_log(DIAGNOSTICS_INFO, "Docked GPU unavailable; trying software x4");
+}
+
 sint32 xport_window_init(void)
 {
     if (headless || video_initialized)
@@ -681,6 +766,18 @@ sint32 xport_window_init(void)
     {
         display_width = 1920;
         display_height = 1080;
+        if (!docked_gpu_attempted)
+        {
+            docked_gpu_attempted = true;
+            docked_gpu_active = docked_presenter_init(window, log_docked_presenter, NULL);
+            if (docked_gpu_active)
+            {
+                video_initialized = true;
+                switch_log(DIAGNOSTICS_INFO, "Video: docked GPU 1920x1080, active 1280x960 at 320,60");
+                return 1;
+            }
+            fall_back_to_software_display();
+        }
     }
     unsigned buffer_count = 3;
     result = framebufferCreate(&switch_framebuffer, window, display_width, display_height,
@@ -737,44 +834,84 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
     static unsigned profiled_submissions, gaps_over_25ms, gaps_over_34ms;
     static unsigned submission_fps;
     uint64 submit_start_us = xport_timer_get();
-    u32 stride_bytes = 0;
-    uint32_t *destination = framebufferBegin(&switch_framebuffer, &stride_bytes);
-    uint64 dequeue_done = xport_timer_get();
-    uint32_t visible_colors = 0;
     const FramebufferSource crop = {source_x, source_y, source_width, source_height};
-    bool movie = dr_movie_display_active() != 0;
+    const bool movie = dr_movie_display_active() != 0;
     const FramebufferFilter filter = !movie && race_display_active ? game_settings.display_filter : FRAMEBUFFER_FILTER_NEAREST;
+    u32 stride_bytes = 0;
+    uint64 dequeue_done = submit_start_us, scale_done = submit_start_us, blit_us = 0;
+    uint32_t visible_colors = 0;
     bool copied = false;
-    if (stride_bytes % sizeof(*destination) == 0)
+    if (docked_gpu_active)
     {
-        size_t stride = stride_bytes / sizeof(*destination);
-        if (filter == FRAMEBUFFER_FILTER_BILINEAR && display_worker_started && destination)
-            copied = blit_with_display_worker((DisplayJob){destination, pixels, stride, display_width, display_height,
-                bitmap_width, bitmap_height, crop, game_settings.upscale}, &visible_colors);
-        else copied = movie ? framebuffer_blit_movie(destination, stride, display_width, display_height,
-                                                pixels, bitmap_width, bitmap_height, crop, &visible_colors)
-                       : framebuffer_blit_filtered(destination, stride, display_width, display_height,
-                                                 pixels, bitmap_width, bitmap_height, crop,
-                                                 game_settings.upscale, filter, &visible_colors);
+        DockedPresenterFrameLayout layout;
+        const DockedPresenterFrameKind kind = movie ? DOCKED_PRESENTER_MOVIE : DOCKED_PRESENTER_GAME;
+        if (pixels && docked_presenter_frame_layout(display_width, display_height, bitmap_width, bitmap_height, crop, kind, &layout))
+        {
+            for (int row = 0; row < crop.height; ++row)
+            {
+                const uint32_t *source_row = pixels + layout.source_offset_pixels + (size_t)row * bitmap_width;
+                for (int column = 0; column < crop.width; ++column)
+                    visible_colors |= source_row[column] & 0xffffffu;
+            }
+        }
+        scale_done = xport_timer_get();
+        DockedPresenterResult result = docked_presenter_present(pixels, bitmap_width, bitmap_height, crop, kind,
+            filter, game_settings.fps_overlay ? &submission_fps : NULL);
+        if (result == DOCKED_PRESENTER_UNAVAILABLE)
+        {
+            fall_back_to_software_display();
+            if (!xport_window_init())
+            {
+                ++failed_frames;
+                return 0;
+            }
+        }
+        else if (result == DOCKED_PRESENTER_INVALID_FRAME)
+        {
+            ++failed_frames;
+            return 0;
+        }
+        else
+            copied = true;
     }
-    const bool measure_race_blit = copied && race_display_active && !movie;
-    const uint64 blit_us = measure_race_blit ? xport_timer_get() - dequeue_done : 0;
-    if (copied && game_settings.fps_overlay)
-        framebuffer_draw_fps(destination, stride_bytes / sizeof(*destination),
-                             display_width, display_height, submission_fps);
-    uint64 scale_done = xport_timer_get();
-    if (destination)
-        framebufferEnd(&switch_framebuffer);
     if (!copied)
     {
-        ++failed_frames;
-        if (failed_frames <= 8 || failed_frames % 180 == 0)
-            switch_log(DIAGNOSTICS_ERROR, "Video copy failed: attempt=%llu source=%dx%d crop=%d,%d %dx%d buffer=%s stride=%u",
-                       (unsigned long long)present_attempts, (int)bitmap_width, (int)bitmap_height,
-                       (int)source_x, (int)source_y, (int)source_width, (int)source_height,
-                       destination ? "available" : "null", (unsigned)stride_bytes);
-        return 0;
+        visible_colors = 0;
+        uint32_t *destination = framebufferBegin(&switch_framebuffer, &stride_bytes);
+        dequeue_done = xport_timer_get();
+        if (stride_bytes % sizeof(*destination) == 0)
+        {
+            size_t stride = stride_bytes / sizeof(*destination);
+            if (filter == FRAMEBUFFER_FILTER_BILINEAR && display_worker_started && destination)
+                copied = blit_with_display_worker((DisplayJob){destination, pixels, stride, display_width, display_height,
+                    bitmap_width, bitmap_height, crop, game_settings.upscale}, &visible_colors);
+            else if (movie)
+                copied = framebuffer_blit_movie(destination, stride, display_width, display_height,
+                                                pixels, bitmap_width, bitmap_height, crop, &visible_colors);
+            else
+                copied = framebuffer_blit_filtered(destination, stride, display_width, display_height,
+                                                   pixels, bitmap_width, bitmap_height, crop,
+                                                   game_settings.upscale, filter, &visible_colors);
+        }
+        blit_us = copied && race_display_active && !movie ? xport_timer_get() - dequeue_done : 0;
+        if (copied && game_settings.fps_overlay)
+            framebuffer_draw_fps(destination, stride_bytes / sizeof(*destination),
+                                 display_width, display_height, submission_fps);
+        scale_done = xport_timer_get();
+        if (destination)
+            framebufferEnd(&switch_framebuffer);
+        if (!copied)
+        {
+            ++failed_frames;
+            if (failed_frames <= 8 || failed_frames % 180 == 0)
+                switch_log(DIAGNOSTICS_ERROR, "Video copy failed: attempt=%llu source=%dx%d crop=%d,%d %dx%d buffer=%s stride=%u",
+                           (unsigned long long)present_attempts, (int)bitmap_width, (int)bitmap_height,
+                           (int)source_x, (int)source_y, (int)source_width, (int)source_height,
+                           destination ? "available" : "null", (unsigned)stride_bytes);
+            return 0;
+        }
     }
+    const bool measure_race_blit = !docked_gpu_active && race_display_active && !movie;
     static FramebufferSource previous_crop;
     static sint32 previous_width, previous_height;
     static bool previous_nonblack;
@@ -812,10 +949,11 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
     ++profiled_submissions;
     if (profiled_submissions == 120)
     {
-        switch_log(DIAGNOSTICS_DEBUG, "Present profile frames=%u dequeue-avg-us=%llu scale-avg-us=%llu queue-avg-us=%llu max-gap-us=%llu gaps-over-25ms=%u gaps-over-34ms=%u",
+        switch_log(DIAGNOSTICS_DEBUG, "Present profile frames=%u dequeue-avg-us=%llu scale-avg-us=%llu queue-avg-us=%llu max-gap-us=%llu gaps-over-25ms=%u gaps-over-34ms=%u backend=%s",
                    profiled_submissions, (unsigned long long)(dequeue_total / profiled_submissions),
                    (unsigned long long)(scale_total / profiled_submissions), (unsigned long long)(queue_total / profiled_submissions),
-                   (unsigned long long)longest_submission_gap, gaps_over_25ms, gaps_over_34ms);
+                   (unsigned long long)longest_submission_gap, gaps_over_25ms, gaps_over_34ms,
+                   docked_gpu_active ? "EGL (queue includes upload/draw/swap)" : "libnx");
         profiled_submissions = 0;
         dequeue_total = scale_total = queue_total = 0;
         longest_submission_gap = 0;
@@ -1043,10 +1181,15 @@ FILE *xport_fopen(const char *path, const char *mode)
         errno = EINVAL;
         return NULL;
     }
-    FILE *file = fopen(path, mode);
+    FILE *file = asset_preload_try_open(path, mode);
+    const bool from_memory = file != NULL;
+    if (from_memory)
+        ++asset_preload_hits;
+    else
+        file = fopen(path, mode);
     int open_error = errno;
     if (file)
-        switch_log(DIAGNOSTICS_DEBUG, "Opened %s (%s)", path, mode);
+        switch_log(DIAGNOSTICS_DEBUG, "Opened %s (%s)%s", path, mode, from_memory ? " [RAM preload]" : "");
     else
         switch_log(DIAGNOSTICS_DEBUG, "Could not open %s (%s, errno=%d)", path, mode, open_error);
     errno = open_error;
@@ -1223,10 +1366,17 @@ void xport_shutdown(void)
     if (cleanup)
         cleanup();
     xport_audio_shutdown();
+    switch_clear_asset_preload();
     if (video_initialized)
     {
         video_initialized = false;
-        framebufferClose(&switch_framebuffer);
+        if (docked_gpu_active)
+        {
+            docked_presenter_close();
+            docked_gpu_active = false;
+        }
+        else
+            framebufferClose(&switch_framebuffer);
     }
     shutting_down = false;
 }
@@ -1236,6 +1386,14 @@ static void show_startup_splash(void)
     extern const uint32_t dracer_splash_pixels[1280 * 720];
     if (!xport_window_init())
         return;
+    if (docked_gpu_active)
+    {
+        if (docked_presenter_splash(dracer_splash_pixels, 1280, 720) == DOCKED_PRESENTER_SUBMITTED)
+            goto splash_submitted;
+        fall_back_to_software_display();
+        if (!xport_window_init())
+            return;
+    }
     u32 stride_bytes = 0;
     uint32_t *destination = framebufferBegin(&switch_framebuffer, &stride_bytes);
     if (!destination)
@@ -1264,6 +1422,7 @@ static void show_startup_splash(void)
         switch_log(DIAGNOSTICS_ERROR, "Could not copy launcher splash pixels (stride=%u)", (unsigned)stride_bytes);
         return;
     }
+splash_submitted:
     switch_log(DIAGNOSTICS_INFO, "Launcher splash submitted for 5000 ms");
     const uint64 splash_deadline = xport_timer_get() + 5000000;
     while (xport_timer_get() < splash_deadline)
@@ -1297,7 +1456,10 @@ int main(void)
         game_running = true;
         start_display_worker();
         pump_applet();
+        const char *const startup_movies[] = {"DATA/INTRO.STR", "DATA/TATOU.STR", "DATA/PIT.STR"};
+        start_asset_preload("boot", startup_movies, sizeof(startup_movies) / sizeof(startup_movies[0]), 32u * 1024u * 1024u);
         show_startup_splash();
+        switch_join_asset_preload();
         switch_log(DIAGNOSTICS_INFO, "Entering reconstructed PS1 game code");
         xport_main();
     }

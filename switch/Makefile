@@ -61,7 +61,7 @@ RUNTIME_SOURCES := psx.c psx_gpu.c psx_font.c psx_spu.c psx_seq.c psx_xa.c \
  psx_mdec.c psx_press.c psx_vlc.c psx_stream.c xport_fmv.c xport_trace.c
 GAME_OBJS := $(GAME_SOURCES:%.c=$(BUILD)/game/%.o)
 RUNTIME_OBJS := $(RUNTIME_SOURCES:%.c=$(BUILD)/xport/%.o)
-OBJS := $(GAME_OBJS) $(RUNTIME_OBJS) $(BUILD)/platform.o $(BUILD)/diagnostics.o $(BUILD)/framebuffer_blit.o $(BUILD)/splash.o
+OBJS := $(GAME_OBJS) $(RUNTIME_OBJS) $(BUILD)/platform.o $(BUILD)/diagnostics.o $(BUILD)/framebuffer_blit.o $(BUILD)/asset_preload.o $(BUILD)/docked_presenter.o $(BUILD)/splash.o
 
 ARCH := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 DEFINES := -D__SWITCH__ -DAP_SWITCH -DXPORT_NATIVE -DFIELD_RATE=60 \
@@ -74,7 +74,7 @@ COMPAT := -fms-extensions -funsigned-char -fno-strict-aliasing -fwrapv \
  -fno-builtin-ccos -fno-builtin-csin -fno-builtin-catan
 COMPILE.c = "$(CC)" $(ARCH) $(DEFINES) $(INCLUDES) $(CPPFLAGS) $(CFLAGS) -std=gnu11 $(COMPAT) \
  -ffunction-sections -fdata-sections -MMD -MP -c
-LIBS := -lnx -lm
+LIBS := -lEGL -lGLESv2 -lglapi -ldrm_nouveau -lstdc++ -lnx -lm
 
 .PHONY: all objects clean
 all: $(BINARY).nro

@@ -65,6 +65,9 @@ uint32 sub_8003A448(void);
 
 #if defined(AP_SWITCH)
 void switch_hold_loading_screen(const char *screen_name);
+void switch_start_race_preload(unsigned level, unsigned circuit, unsigned sky);
+void switch_join_asset_preload(void);
+void switch_clear_asset_preload(void);
 #endif
 
 sint32 sub_8004BA44(uint32 position)
@@ -252,6 +255,9 @@ void sub_80015E38(void)
     CdInit();
 #endif
     sub_8002BC5C(0x800597C4u);
+#if defined(AP_SWITCH)
+    switch_clear_asset_preload();
+#endif
     ResetGraph(0);
     SetGraphDebug(0);
     DrawSync(0);
@@ -333,13 +339,18 @@ void sub_80015E38(void)
                 sub_8002B6CC();
 #if defined(AP_SWITCH)
                 // Let the original disc callback draw before race setup reuses VRAM.
+                switch_start_race_preload(r_u32(0x80064C04u), r_u32(0x80064C08u), r_u32(0x800593A4u));
                 switch_hold_loading_screen("Race loading");
+                switch_join_asset_preload();
 #endif
                 w_u32(0x80064C18u, 0u);
                 sub_800161CC();
                 w_u32(0x80065248u, 0u);
                 w_u32(0x80065110u, 0u);
                 sub_80014BC4();
+#if defined(AP_SWITCH)
+                switch_clear_asset_preload();
+#endif
                 w_u32(0x80064B58u, 0u);
                 sub_8002B840();
                 sub_800151DC();
