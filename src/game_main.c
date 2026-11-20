@@ -348,6 +348,10 @@ void sub_80015E38(void)
         }
         sub_8002B88C(r_u32(0x80065238u), 0x800102D4u);
         sub_8002B6CC();
+#if defined(AP_SWITCH)
+        // Let the original disc complete three turns before loading the menu overlay.
+        switch_hold_loading_screen("Return to menu loading");
+#endif
     }
 }
 
