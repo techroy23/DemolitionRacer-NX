@@ -1,8 +1,14 @@
 # Switch video output
 
-Since 0.1.2 the shipping NRO uses libnx's linear double-buffered framebuffer. Both STR movies and game rendering already send CPU-generated pixels through `xport_present`. The port copies those pixels to BGRA8888 with opaque alpha and fits them into a centered 4:3 rectangle. It does not redraw the menus or replace art. See the [libnx framebuffer API](https://switchbrew.github.io/libnx/framebuffer_8h.html) and [simplegfx example](https://github.com/switchbrew/switch-examples/tree/master/graphics/simplegfx).
+## Current path (v0.2.4)
 
-On hardware, 0.1.1 played audio and read menu assets but remained black. The old success log was not proof of a buffer swap: `vid_blit` returned success even when the calculated output rectangle was empty. The exact device-side failure is still unknown. The new build bypasses EGL and logs source dimensions, sampled output colors, blank-to-nonblank transitions, and submission counts. A submission is not confirmation that the display showed the frame.
+The port prefers EGL/GLES for presentation outside applet mode. It uploads the finished CPU frame and preserves the centered 4:3 race viewport. At `x4`, handheld uses 1280×720 output with a 960×720 game viewport; docked uses 1920×1080 output with a 1280×960 game viewport. On an operation-mode change, it closes the old EGL producer before trying to rebuild for the new output. Applet mode and recoverable GPU failures use the libnx framebuffer. The original software rasterizer still renders the scene.
+
+## Original framebuffer path
+
+Version 0.1.2 introduced libnx's linear framebuffer. Both STR movies and game rendering send CPU-generated pixels through `xport_present`. The software path copies those pixels to BGRA8888 with opaque alpha. See the [libnx framebuffer API](https://switchbrew.github.io/libnx/framebuffer_8h.html) and [simplegfx example](https://github.com/switchbrew/switch-examples/tree/master/graphics/simplegfx).
+
+On hardware, 0.1.1 played audio and read menu assets but remained black. The old success log was not proof of a buffer swap: `vid_blit` returned success even when the calculated output rectangle was empty. The exact device-side failure is still unknown. The 0.1.2 build bypassed EGL and logged source dimensions, sampled colors, and submission counts. A submission is not confirmation that the display showed the frame.
 
 ## Historical EGL/GLES prototype (not built)
 

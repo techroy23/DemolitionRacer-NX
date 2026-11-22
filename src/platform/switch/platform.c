@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include "diagnostics.h"
 #include "framebuffer_blit.h"
+#include "resume_switch.h"
 #include "asset_preload.h"
 #include "docked_presenter.h"
 
@@ -26,9 +27,9 @@ static sint32 headless, quitting, exit_code;
 static bool game_running, video_initialized, shutting_down;
 static jmp_buf game_exit;
 static XportCleanup cleanup_handler;
-static int display_width = 1280, display_height = 720;
+static int32_t display_width = HANDHELD_PRESENTER_WIDTH, display_height = HANDHELD_PRESENTER_HEIGHT;
 static Framebuffer switch_framebuffer;
-static bool docked_gpu_active, docked_gpu_attempted;
+static bool gpu_active, gpu_attempted;
 static const char *asset_preload_phase;
 static unsigned asset_preload_hits;
 static uint64 present_attempts, presented_frames, failed_frames, nonblack_frames;
@@ -43,7 +44,7 @@ static uint64 track_extension_attempts, track_extension_hits, track_extension_ob
 static uint64 worker_frames, worker_wait_total, worker_wait_peak;
 static FILE *diagnostic_log;
 static DiagnosticLevel diagnostic_threshold = DIAGNOSTICS_INFO;
-static unsigned debug_lines;
+
 static DiagnosticSettings game_settings;
 static char diagnostic_path[160];
 static PadState exit_pad;
@@ -57,17 +58,13 @@ static void switch_log(DiagnosticLevel level, const char *format, ...)
 {
     if (!diagnostic_log || level > diagnostic_threshold)
         return;
-    if (level == DIAGNOSTICS_DEBUG && debug_lines >= 4096)
-        return;
+
     va_list arguments;
     va_start(arguments, format);
     bool written = fprintf(diagnostic_log, "[%10llu ms] ", (unsigned long long)(xport_timer_get() / 1000)) >= 0 &&
                    diagnostics_vwrite(diagnostic_log, diagnostic_threshold, level, format, arguments);
     va_end(arguments);
-    if (written && level == DIAGNOSTICS_DEBUG && ++debug_lines == 4096)
-        written = diagnostics_write(diagnostic_log, diagnostic_threshold, DIAGNOSTICS_INFO,
-                                    "Debug event limit reached; INFO and ERROR remain enabled");
-    if (level == DIAGNOSTICS_ERROR)
+    if (level <= DIAGNOSTICS_ERROR)
         fsync(fileno(diagnostic_log));
     if (!written)
     {
@@ -178,7 +175,7 @@ static void start_display_worker(void)
     const u64 candidates = R_SUCCEEDED(mask_result) && main_core < 64 ? core_mask & ~(UINT64_C(1) << main_core) : 0;
     if (!candidates)
     {
-        switch_log(DIAGNOSTICS_INFO, "Display worker: serial fallback; no alternate core available");
+        switch_log(DIAGNOSTICS_WARN, "Display worker: serial fallback; no alternate core available");
         return;
     }
     // Prefer the application's lower-numbered cores rather than core 3.
@@ -295,6 +292,8 @@ static void start_diagnostics(void)
     if (settings)
         fclose(settings);
     diagnostic_threshold = game_settings.level;
+    if (diagnostic_threshold == DIAGNOSTICS_OFF)
+        return;
 
     u64 timestamp = 0;
     TimeCalendarTime calendar;
@@ -346,7 +345,7 @@ static void start_diagnostics(void)
 
 void switch_record_collision_response(uint64 duration_microseconds)
 {
-    if (diagnostic_threshold != DIAGNOSTICS_DEBUG || !diagnostic_log)
+    if (diagnostic_threshold < DIAGNOSTICS_DEBUG || !diagnostic_log)
         return;
     ++collision_response_count;
     collision_response_total += duration_microseconds;
@@ -364,7 +363,7 @@ static void start_asset_preload(const char *phase, const char *const *paths, siz
     }
     if (!asset_preload_start(paths, count, budget))
     {
-        switch_log(DIAGNOSTICS_INFO, "Asset preload %s: unavailable; using SD", phase);
+        switch_log(DIAGNOSTICS_WARN, "Asset preload %s: unavailable; using SD", phase);
         return;
     }
     asset_preload_phase = phase;
@@ -447,7 +446,7 @@ void switch_log_movie_source_end(const char *path, uint32 frame_number)
 
 void switch_record_race_profile(uint64 update_us, uint64 scene_us, uint64 wait_us)
 {
-    if (diagnostic_threshold != DIAGNOSTICS_DEBUG || !diagnostic_log)
+    if (diagnostic_threshold < DIAGNOSTICS_DEBUG || !diagnostic_log)
         return;
     static uint64 update_total, scene_total, wait_total, peak, window_start;
     static unsigned frames;
@@ -493,10 +492,19 @@ static u64 clock_frequency;
 
 static void pump_applet(void)
 {
-    if (!quitting && !appletMainLoop())
+    if (!quitting)
     {
-        quitting = 1;
-        switch_log(DIAGNOSTICS_INFO, "Homebrew exit requested");
+        RESUME_BEGIN(pump);
+        const bool keep_running = appletMainLoop();
+        RESUME_END(RESUME_PUMP, pump, keep_running, !keep_running);
+#ifdef DRACER_RESUME_TRACE
+        resume_switch_probe(false);
+#endif
+        if (!keep_running)
+        {
+            quitting = 1;
+            switch_log(DIAGNOSTICS_INFO, "Homebrew exit requested");
+        }
     }
     static uint64 next_exit_poll;
     if (!quitting && exit_pad_ready && xport_timer_get() >= next_exit_poll)
@@ -506,6 +514,8 @@ static void pump_applet(void)
         padUpdate(&exit_pad);
         if ((padGetButtons(&exit_pad) & exit_buttons) == exit_buttons)
         {
+            RESUME_BEGIN(chord);
+            RESUME_END(RESUME_CHORD, chord, 0, true);
             quitting = 1;
             switch_log(DIAGNOSTICS_INFO, "Exit chord pressed: Plus + Minus + ZL + ZR");
         }
@@ -525,7 +535,12 @@ uint64 xport_timer_get(void)
         clock_started = true;
     }
     ticks -= clock_start;
-    return ticks / clock_frequency * 1000000u + ticks % clock_frequency * 1000000u / clock_frequency;
+    const uint64 raw_us = ticks / clock_frequency * 1000000u + ticks % clock_frequency * 1000000u / clock_frequency;
+#ifdef DRACER_RESUME_CLOCK
+    return resume_switch_clock(raw_us);
+#else
+    return raw_us;
+#endif
 }
 
 void xport_timer_wait_frame(uint64 target_field)
@@ -733,18 +748,18 @@ void xport_set_function_key_handler(XportFunctionKeyHandler handler)
     (void)handler;
 }
 
-static void log_docked_presenter(const char *message, void *user_data)
+static void log_gpu_presenter(const char *message, void *user_data)
 {
     (void)user_data;
-    switch_log(DIAGNOSTICS_INFO, "Docked GPU: %s", message);
+    switch_log(DIAGNOSTICS_INFO, "%s", message);
 }
 
 static void fall_back_to_software_display(void)
 {
     docked_presenter_close();
-    docked_gpu_active = false;
+    gpu_active = false;
     video_initialized = false;
-    switch_log(DIAGNOSTICS_INFO, "Docked GPU unavailable; trying software x4");
+    switch_log(DIAGNOSTICS_WARN, "GPU presenter unavailable; switching to libnx software for this launch");
 }
 
 sint32 xport_window_init(void)
@@ -761,37 +776,49 @@ sint32 xport_window_init(void)
     Result result = nwindowGetDimensions(window, &window_width, &window_height);
     switch_log(DIAGNOSTICS_DEBUG, "Video native window before setup: %ux%u, result=0x%08x",
                (unsigned)window_width, (unsigned)window_height, (unsigned)result);
-    // Only x4 needs the extra docked pixels; retain the established 720p path otherwise.
-    if (game_settings.upscale == 4 && appletGetOperationMode() == AppletOperationMode_Console)
+    const AppletType type = appletGetAppletType();
+    const bool full_application = type == AppletType_Application || type == AppletType_SystemApplication;
+    const bool docked = appletGetOperationMode() == AppletOperationMode_Console;
+    const bool try_gpu = docked_presenter_select_output(docked, full_application, game_settings.upscale,
+                                                        &display_width, &display_height);
+    if (try_gpu && !gpu_attempted)
     {
-        display_width = 1920;
-        display_height = 1080;
-        if (!docked_gpu_attempted)
+        gpu_attempted = true;
+        gpu_active = docked_presenter_init(window, display_width, display_height, game_settings.upscale,
+                                           log_gpu_presenter, NULL);
+        if (gpu_active)
         {
-            docked_gpu_attempted = true;
-            docked_gpu_active = docked_presenter_init(window, log_docked_presenter, NULL);
-            if (docked_gpu_active)
-            {
-                video_initialized = true;
-                switch_log(DIAGNOSTICS_INFO, "Video: docked GPU 1920x1080, active 1280x960 at 320,60");
-                return 1;
-            }
-            fall_back_to_software_display();
+            video_initialized = true;
+            const FramebufferViewport viewport = framebuffer_viewport(display_width, display_height, game_settings.upscale);
+            switch_log(DIAGNOSTICS_INFO, "Video: GLES %dx%d, active %dx%d at %d,%d",
+                       display_width, display_height, (int)viewport.width, (int)viewport.height,
+                       (int)viewport.x, (int)viewport.y);
+            return 1;
         }
+        fall_back_to_software_display();
+    }
+    else if (!try_gpu)
+        switch_log(DIAGNOSTICS_INFO, "Video: GLES skipped in applet mode; using libnx software at 720p");
+
+    // Never register a second producer over live EGL buffers if teardown failed.
+    if (window->slots_configured)
+    {
+        switch_log(DIAGNOSTICS_ERROR, "Video: native window still owns buffers; refusing software setup");
+        return 0;
     }
     unsigned buffer_count = 3;
     result = framebufferCreate(&switch_framebuffer, window, display_width, display_height,
                                PIXEL_FORMAT_BGRA_8888, buffer_count);
     if (R_FAILED(result))
     {
-        switch_log(DIAGNOSTICS_INFO, "Video triple buffer unavailable (0x%08x); retrying with two", (unsigned)result);
+        switch_log(DIAGNOSTICS_WARN, "Video triple buffer unavailable (0x%08x); retrying with two", (unsigned)result);
         buffer_count = 2;
         result = framebufferCreate(&switch_framebuffer, window, display_width, display_height,
                                    PIXEL_FORMAT_BGRA_8888, buffer_count);
     }
     if (R_FAILED(result) && display_height == 1080)
     {
-        switch_log(DIAGNOSTICS_INFO, "Video 1080p setup declined (0x%08x); falling back to 720p", (unsigned)result);
+        switch_log(DIAGNOSTICS_WARN, "Video 1080p setup declined (0x%08x); falling back to 720p", (unsigned)result);
         display_width = 1280;
         display_height = 720;
         result = framebufferCreate(&switch_framebuffer, window, display_width, display_height, PIXEL_FORMAT_BGRA_8888, 2);
@@ -814,6 +841,15 @@ sint32 xport_window_init(void)
                display_width, display_height, (int)viewport.width, (int)viewport.height,
                (int)viewport.x, (int)viewport.y, (unsigned)switch_framebuffer.stride, buffer_count);
     return video_initialized;
+}
+
+static bool rebuild_gpu_display_for_mode_change(void)
+{
+    docked_presenter_close();
+    gpu_active = false;
+    video_initialized = false;
+    gpu_attempted = false;
+    return xport_window_init() != 0;
 }
 
 sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_height,
@@ -841,11 +877,12 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
     uint64 dequeue_done = submit_start_us, scale_done = submit_start_us, blit_us = 0;
     uint32_t visible_colors = 0;
     bool copied = false;
-    if (docked_gpu_active)
+    for (unsigned mode_rebuilds = 0; gpu_active && !copied;)
     {
+        visible_colors = 0;
         DockedPresenterFrameLayout layout;
         const DockedPresenterFrameKind kind = movie ? DOCKED_PRESENTER_MOVIE : DOCKED_PRESENTER_GAME;
-        if (pixels && docked_presenter_frame_layout(display_width, display_height, bitmap_width, bitmap_height, crop, kind, &layout))
+        if (pixels && docked_presenter_frame_layout(display_width, display_height, game_settings.upscale, bitmap_width, bitmap_height, crop, kind, &layout))
         {
             for (int row = 0; row < crop.height; ++row)
             {
@@ -857,7 +894,17 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
         scale_done = xport_timer_get();
         DockedPresenterResult result = docked_presenter_present(pixels, bitmap_width, bitmap_height, crop, kind,
             filter, game_settings.fps_overlay ? &submission_fps : NULL);
-        if (result == DOCKED_PRESENTER_UNAVAILABLE)
+        if (result == DOCKED_PRESENTER_MODE_CHANGED)
+        {
+            if (mode_rebuilds++ || !rebuild_gpu_display_for_mode_change())
+            {
+                ++failed_frames;
+                return 0;
+            }
+            // Retry the same frame with the new drawable and viewport.
+            continue;
+        }
+        else if (result == DOCKED_PRESENTER_UNAVAILABLE)
         {
             fall_back_to_software_display();
             if (!xport_window_init())
@@ -877,7 +924,10 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
     if (!copied)
     {
         visible_colors = 0;
+        RESUME_BEGIN(dequeue);
         uint32_t *destination = framebufferBegin(&switch_framebuffer, &stride_bytes);
+        RESUME_END(RESUME_DEQUEUE, dequeue, stride_bytes, !destination);
+        RESUME_BEGIN(blit);
         dequeue_done = xport_timer_get();
         if (stride_bytes % sizeof(*destination) == 0)
         {
@@ -898,8 +948,13 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
             framebuffer_draw_fps(destination, stride_bytes / sizeof(*destination),
                                  display_width, display_height, submission_fps);
         scale_done = xport_timer_get();
+        RESUME_END(RESUME_BLIT, blit, copied, false);
         if (destination)
+        {
+            RESUME_BEGIN(queue);
             framebufferEnd(&switch_framebuffer);
+            RESUME_END(RESUME_QUEUE, queue, 0, false);
+        }
         if (!copied)
         {
             ++failed_frames;
@@ -911,7 +966,7 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
             return 0;
         }
     }
-    const bool measure_race_blit = !docked_gpu_active && race_display_active && !movie;
+    const bool measure_race_blit = !gpu_active && race_display_active && !movie;
     static FramebufferSource previous_crop;
     static sint32 previous_width, previous_height;
     static bool previous_nonblack;
@@ -953,7 +1008,7 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
                    profiled_submissions, (unsigned long long)(dequeue_total / profiled_submissions),
                    (unsigned long long)(scale_total / profiled_submissions), (unsigned long long)(queue_total / profiled_submissions),
                    (unsigned long long)longest_submission_gap, gaps_over_25ms, gaps_over_34ms,
-                   docked_gpu_active ? "EGL (queue includes upload/draw/swap)" : "libnx");
+                   gpu_active ? "EGL (queue includes upload/draw/swap)" : "libnx");
         profiled_submissions = 0;
         dequeue_total = scale_total = queue_total = 0;
         longest_submission_gap = 0;
@@ -976,6 +1031,11 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
     }
     if (nonblack)
         ++nonblack_frames;
+    switch_log(DIAGNOSTICS_TRACE,
+               "Present step: frame=%llu dequeue-us=%llu scale-us=%llu queue-us=%llu rgb-or=%06x",
+               (unsigned long long)presented_frames, (unsigned long long)(dequeue_done - submit_start_us),
+               (unsigned long long)(scale_done - dequeue_done), (unsigned long long)(submitted_us - scale_done),
+               (unsigned)visible_colors);
     if (presented_frames <= 8 || presented_frames % 120 == 0 ||
         bitmap_width != previous_width || bitmap_height != previous_height ||
         source_x != previous_crop.x || source_y != previous_crop.y ||
@@ -1103,7 +1163,10 @@ static void submit_audio(uint32 input_frames, uint32 output_frames, uint32 peak)
     {
         AudioOutBuffer *released = NULL;
         u32 count = 0;
-        if (R_FAILED(audoutGetReleasedAudioOutBuffer(&released, &count)))
+        RESUME_BEGIN(release);
+        const Result release_result = audoutGetReleasedAudioOutBuffer(&released, &count);
+        RESUME_END(RESUME_AUDIO_RELEASE, release, release_result, R_FAILED(release_result));
+        if (R_FAILED(release_result))
             goto fail;
         if (!count || !released)
             break;
@@ -1122,7 +1185,10 @@ static void submit_audio(uint32 input_frames, uint32 output_frames, uint32 peak)
         else
             resample_stereo(buffer->buffer, output_frames, audio_input, input_frames);
         armDCacheFlush(buffer->buffer, buffer->buffer_size);
-        if (R_FAILED(audoutAppendAudioOutBuffer(buffer)))
+        RESUME_BEGIN(append);
+        const Result append_result = audoutAppendAudioOutBuffer(buffer);
+        RESUME_END(RESUME_AUDIO_APPEND, append, append_result, R_FAILED(append_result));
+        if (R_FAILED(append_result))
             goto fail;
         audio_pending[i] = true;
         ++g_xport_audio_submitted_buffers;
@@ -1130,6 +1196,9 @@ static void submit_audio(uint32 input_frames, uint32 output_frames, uint32 peak)
             ++g_xport_audio_nonzero_buffers;
         return;
     }
+#ifdef DRACER_RESUME_TRACE
+    resume_switch_audio_drop();
+#endif
     // Do not stall the game or stop the guest SPU when output backs up.
     ++g_xport_audio_callback_overruns;
     return;
@@ -1153,7 +1222,9 @@ void xport_audio_vblank(uint32 before, uint32 rate)
         uint32 count = input_total - mixed;
         if (count > AUDIO_INPUT_FRAMES)
             count = AUDIO_INPUT_FRAMES;
+        RESUME_BEGIN(mix);
         spu_render_vblank(audio_input, count);
+        RESUME_END(RESUME_AUDIO_MIX, mix, count, false);
         uint32 peak = 0;
         for (uint32 i = 0; i < count * 2; ++i)
         {
@@ -1370,10 +1441,10 @@ void xport_shutdown(void)
     if (video_initialized)
     {
         video_initialized = false;
-        if (docked_gpu_active)
+        if (gpu_active)
         {
             docked_presenter_close();
-            docked_gpu_active = false;
+            gpu_active = false;
         }
         else
             framebufferClose(&switch_framebuffer);
@@ -1386,10 +1457,17 @@ static void show_startup_splash(void)
     extern const uint32_t dracer_splash_pixels[1280 * 720];
     if (!xport_window_init())
         return;
-    if (docked_gpu_active)
+    for (unsigned mode_rebuilds = 0; gpu_active;)
     {
-        if (docked_presenter_splash(dracer_splash_pixels, 1280, 720) == DOCKED_PRESENTER_SUBMITTED)
+        const DockedPresenterResult result = docked_presenter_splash(dracer_splash_pixels, 1280, 720);
+        if (result == DOCKED_PRESENTER_SUBMITTED)
             goto splash_submitted;
+        if (result == DOCKED_PRESENTER_MODE_CHANGED)
+        {
+            if (mode_rebuilds++ || !rebuild_gpu_display_for_mode_change())
+                return;
+            continue;
+        }
         fall_back_to_software_display();
         if (!xport_window_init())
             return;
@@ -1434,11 +1512,16 @@ splash_submitted:
 
 int main(void)
 {
+#ifdef DRACER_RESUME_TRACE
+    resume_switch_start();
+#endif
     start_diagnostics();
     // libnx's CRT mounts sdmc:. Use a fixed cwd for both xport and direct stdio.
     if (chdir(GAME_DIR) != 0)
     {
-        xport_message_error("Demolition Racer", "Cannot enter " GAME_DIR);
+        const int directory_error = errno;
+        switch_log(DIAGNOSTICS_FATAL, "Cannot enter %s (errno=%d)", GAME_DIR, directory_error);
+        fprintf(stderr, "Demolition Racer: Cannot enter %s (errno=%d)\n", GAME_DIR, directory_error);
         close_diagnostics();
         return 2;
     }
@@ -1464,6 +1547,9 @@ int main(void)
         xport_main();
     }
     game_running = false;
+#ifdef DRACER_RESUME_TRACE
+    resume_switch_stop(diagnostic_log);
+#endif
     switch_set_race_display_active(false);
     stop_display_worker();
     switch_log(DIAGNOSTICS_INFO, "Video totals: requested=%llu submitted=%llu nonblack=%llu failed=%llu; audio buffers=%u overruns=%u",
@@ -1473,7 +1559,8 @@ int main(void)
     xport_shutdown();
     if (exit_locked)
         appletUnlockExit();
-    switch_log(DIAGNOSTICS_INFO, "Shutdown complete (exit code=%d)", (int)exit_code);
+    switch_log(exit_code == 0 ? DIAGNOSTICS_INFO : DIAGNOSTICS_ERROR,
+               "Shutdown complete (exit code=%d)", (int)exit_code);
     close_diagnostics();
     return exit_code;
 }

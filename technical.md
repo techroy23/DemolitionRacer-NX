@@ -9,7 +9,7 @@
 | `switch/` | Switch build rules and default configuration; compiled artifacts go in `switch/build/`. |
 | `tools/`, `tests/` | Disc extraction, artwork preparation, packaging, and host tests. |
 
-The Switch build compiles the game to AArch64 and links the needed compatibility services. It does not execute the retail MIPS instructions or use a retail BIOS. Some files extracted from the disc, including PS1 executables, are read as data. The Switch backend keeps the original 4:3 race view. It normally presents through the libnx framebuffer and uses EGL/GLES for docked `x4` when available. It does not change the game's race timing to match display refresh.
+The Switch build compiles the game to AArch64 and links the needed compatibility services. It does not execute the retail MIPS instructions or use a retail BIOS. Some files extracted from the disc, including PS1 executables, are read as data. The Switch backend keeps the original 4:3 race view. It prefers EGL/GLES presentation in full-memory handheld and docked launches and falls back to libnx when needed. GPU scaling does not change the game's race cadence or move its triangle rasterizer to the GPU.
 
 ## Build the Switch app
 
@@ -51,9 +51,11 @@ This creates `pack/DATA/` first, then a fresh `dist/` containing the app, settin
 - `DISPLAY_WORKER: true` splits the software bilinear blit across the main thread and one worker when an alternate core is available. It does not accelerate EGL or `NEAREST`. On the software path, compare serial and worker performance on the same track with `BILINEAR` enabled for both runs. `Race display worker` reports actual worker usage and wait time.
 - `CAR_LOD: EXTENDED` uses the original near-car model and its effects at up to 10% more distance. `TRACK_DISTANCE: EXTENDED` can draw farther into the forward-most already-loaded section on eligible single-player circuits; it does not stream an extra section. Both default to `STOCK`. Test them separately with `NEAREST`, then together if frame pacing holds. `Race geometry` reports car draws and track-cache stats; `Race track extension` shows whether the extra pass actually emitted geometry.
 - Saves go in `SAVE/` next to the NRO. A legacy `DemolitionRacer.sav` can migrate if there is no existing save or recovery backup there. The exit chord does not force a save.
-- A new `DemolitionRacer_YYYY-MM-DD_HH-MM-SS.log` uses the console's local time. `DEBUG` includes file access, elapsed time, framebuffer, audio, and save diagnostics. Use `INFO` for major events or `ERROR` for errors only.
+- A new `DemolitionRacer_YYYY-MM-DD_HH-MM-SS.log` uses the console's local time. `LOG: false` skips file creation. Each level includes all more severe messages: `FATAL` for failures that stop the app, `ERROR` for failed operations, `WARN` for recoverable issues, `INFO` for milestones, `DEBUG` for troubleshooting, and `TRACE` for per-frame presentation timings. Use `TRACE` for short reproductions: its frequent writes can affect frame pacing.
 
 For race stutter, reproduce on the same track and keep the `Race profile`, `Collision profile`, and `Present profile` lines. The original race loop waits for at least two game VBlank counts per iteration. Its timings can include calls that submit frames, so don't add race and presentation timings together.
+
+For a dock change, check that `Video: GLES` reports the new output size. For HOME or sleep issues, note which action you used and quit with the exit chord to flush the RAM trace. See [video output](switch/graphics.md) and [resume diagnostics](switch/RESUME-DIAGNOSTICS.md).
 
 ## Verification
 

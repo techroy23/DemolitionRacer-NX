@@ -51,6 +51,29 @@ Optional graphics and parallel processing experiments are tracked in [TODO.md](T
 - OLED evidence: 0.1.1 reached FMV and menu audio but the screen stayed black. Its graphics success message was not proof of a swap. 0.1.2 submits the game's existing pixels directly through libnx, logs frame contents and cadence, and enables one controller for now.
 - OLED 0.1.3 baseline: sampled menu submission FPS had median 60, versus 42 during the selected race interval. The race loop waits for at least two guest VBlank counts per iteration. Keep that timing and distinguish submissions from game iterations. The 0.1.4 build adds phase profiling and a pixel-identical 3× scaler path. Run the same track with `LOG: DEBUG` and compare `Race profile`, `Collision profile`, and `Present profile`. The 0.1.4 OLED log measured roughly 20–30 race iterations per second and average scene time of 3.4–7.4 ms. Display dequeue averaged up to 4.3 ms in the busiest logged race window, but the existing phase timings did not isolate collisions. Build 0.1.5 tries triple buffering and adds collision response and submission gap diagnostics. Keep the original two-field pacing gate; target steadier 60 Hz delivery, not 60 unique race updates. Full parity remains unverified.
 
+## Next work: resume reliability and optional race graphics
+
+Keep these changes on separate local test paths. Fix HOME and sleep resume first, and test that build before combining it with CPU scheduling or graphics changes. The original rendering and game timing remain the reference with enhancements off.
+
+Use the GPU for presentation whenever it is available. First extend the existing GLES presenter to handheld and test it independently of the resume change. This moves scaling and presentation off the CPU; it does not move the PS1 triangle rasterizer. Keep libnx software presentation as the fallback, with automatic CPU work sharing only when it can help. Keep game logic, physics, and audio on the CPU.
+
+For actual GPU race rendering, prove opaque track textures and geometry AA in a standalone probe first. Then compare an opt-in race pass with the stock renderer, checking palette lookups, transparency, draw order, and HUD behavior before promoting it. Treat `x16` anisotropy, MSAA sample counts, and `x32` tessellation as requested limits, not promises of hardware support or performance. Leave enhancements off by default until the stock path and resume tests pass.
+
+| Workstream | Work | OLED acceptance |
+| --- | --- | --- |
+| HOME and sleep resume | Trace focus loss, wake, and focus regain separately. Record the last completed audio, VBlank, worker, and presentation stages. Preserve the current race, save state, and original timing while resuming platform services. | HOME then return; power-button sleep and wake; repeat each in menus and races. Check input, picture, audio, and clean exit on handheld and docked paths. Include movie and loading transitions. |
+| Automatic three-core work sharing | Replace the `DISPLAY_WORKER` toggle with automatic scheduling across up to three available application cores. Keep old settings files readable. Assign independent jobs only and fall back when cores are unavailable. Idle workers when there is no useful job. | Show actual work per core and compare frame pacing and audio against the current build. Do not move physics or other shared game state merely to raise core usage. |
+| Anisotropic filtering and AA | Prototype race texture filtering up to `x16` and a separate anti-aliasing option, both off by default. Measure hardware limits and log effective settings. Filter true texture samples and distinguish geometry AA from a post-process filter. | Compare road detail at shallow angles and polygon edges in fixed captures. Preserve menus, HUD, movies, and loading art. Benchmark each option independently. |
+| Tessellation | Prototype adjustable subdivision of eligible original race surfaces up to requested `x32`, with a stock/default-off path. Define the factor precisely and cap generated geometry and memory. Do not alter collision, track topology, or original game assets. | Show a visible benefit, no cracks or missing geometry, and acceptable pacing on original circuits. Log requested and effective factors; never label a lower effective factor as `x32`. |
+
+Evidence from `DemolitionRacer_2026-11-22_19-15-56.log`: the last normal video sample was near 327 s. By the exit chord near 585 s, the race log showed 611 additional audio overruns and zero failed video submissions. The app still processed the exit chord. The log does not identify whether HOME or sleep triggered the freeze, or where rendering stopped.
+
+## v0.2.4 release evidence
+
+- The owner reported that HOME/sleep no longer froze the combined test build. The program-active clock is now the default on supported firmware; the raw-clock control remains available for diagnosis.
+- In the separate hot-dock OLED run (`DemolitionRacer_2026-11-22_20-53-43.log`), GLES switched from 1280×720 to 1920×1080 during a race at `UPSCALE: x4`. After the transition, frames 18,120 through 26,520 averaged 59.4 submissions/sec. The transition caused a brief hitch and 39 additional audio overruns, but the game recovered without switching to software. The session submitted 28,963 frames, with zero failures and a clean exit. These counts do not measure unique game frames or scanout.
+- This run did not cover hot undocking. Repeat dock/undock and HOME/sleep in each mode, including menus and loading. Automatic three-core fallback scaling and GPU race geometry remain separate work.
+
 ## Sources
 
 [1] https://github.com/m35/jpsxdec

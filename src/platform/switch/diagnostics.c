@@ -13,9 +13,13 @@ const char *diagnostics_level_name(DiagnosticLevel level)
 {
     switch (level)
     {
+        case DIAGNOSTICS_OFF: return "false";
+        case DIAGNOSTICS_FATAL: return "FATAL";
         case DIAGNOSTICS_ERROR: return "ERROR";
+        case DIAGNOSTICS_WARN: return "WARN";
         case DIAGNOSTICS_INFO: return "INFO";
         case DIAGNOSTICS_DEBUG: return "DEBUG";
+        case DIAGNOSTICS_TRACE: return "TRACE";
         default: return "INVALID";
     }
 }
@@ -68,10 +72,11 @@ bool diagnostics_parse_settings(FILE *settings, DiagnosticSettings *configuratio
         switch (field)
         {
             case 0:
-                if (!strcmp(value, "DEBUG")) parsed.level = DIAGNOSTICS_DEBUG;
-                else if (!strcmp(value, "INFO")) parsed.level = DIAGNOSTICS_INFO;
-                else if (!strcmp(value, "ERROR")) parsed.level = DIAGNOSTICS_ERROR;
-                else return false;
+                for (parsed.level = DIAGNOSTICS_OFF; parsed.level <= DIAGNOSTICS_TRACE; ++parsed.level)
+                    if (!strcmp(value, diagnostics_level_name(parsed.level)))
+                        break;
+                if (parsed.level > DIAGNOSTICS_TRACE)
+                    return false;
                 break;
             case 1:
                 if (!strcmp(value, "true")) parsed.fps_overlay = true;

@@ -1,21 +1,37 @@
 #include "docked_presenter.h"
+#include "resume_switch.h"
 
-bool docked_presenter_validate_drawable(int32_t egl_width, int32_t egl_height,
+bool docked_presenter_select_output(bool docked, bool full_application, unsigned upscale,
+                                    int32_t *width, int32_t *height)
+{
+    const bool use_1080p = docked && full_application && upscale == 4;
+    *width = use_1080p ? DOCKED_PRESENTER_WIDTH : HANDHELD_PRESENTER_WIDTH;
+    *height = use_1080p ? DOCKED_PRESENTER_HEIGHT : HANDHELD_PRESENTER_HEIGHT;
+    return full_application;
+}
+
+static bool supported_dimensions(int32_t width, int32_t height)
+{
+    return (width == DOCKED_PRESENTER_WIDTH && height == DOCKED_PRESENTER_HEIGHT) ||
+           (width == HANDHELD_PRESENTER_WIDTH && height == HANDHELD_PRESENTER_HEIGHT);
+}
+
+bool docked_presenter_validate_drawable(int32_t width, int32_t height,
+                                         int32_t egl_width, int32_t egl_height,
                                          uint32_t native_width, uint32_t native_height,
                                          bool native_buffers_registered)
 {
-    return native_buffers_registered && native_width == DOCKED_PRESENTER_WIDTH &&
-           native_height == DOCKED_PRESENTER_HEIGHT &&
-           ((egl_width == 0 && egl_height == 0) ||
-            (egl_width == DOCKED_PRESENTER_WIDTH && egl_height == DOCKED_PRESENTER_HEIGHT));
+    return supported_dimensions(width, height) && native_buffers_registered &&
+           native_width == (uint32_t)width && native_height == (uint32_t)height &&
+           ((egl_width == 0 && egl_height == 0) || (egl_width == width && egl_height == height));
 }
 
-bool docked_presenter_frame_layout(int32_t drawable_width, int32_t drawable_height,
+bool docked_presenter_frame_layout(int32_t drawable_width, int32_t drawable_height, unsigned upscale,
                                    int32_t bitmap_width, int32_t bitmap_height,
                                    FramebufferSource crop, DockedPresenterFrameKind kind,
                                    DockedPresenterFrameLayout *layout)
 {
-    if (!layout || drawable_width != DOCKED_PRESENTER_WIDTH || drawable_height != DOCKED_PRESENTER_HEIGHT ||
+    if (!layout || !supported_dimensions(drawable_width, drawable_height) ||
         bitmap_width <= 0 || bitmap_height <= 0 || crop.x < 0 || crop.y < 0 ||
         crop.width <= 0 || crop.height <= 0 || crop.width > bitmap_width || crop.height > bitmap_height ||
         crop.x > bitmap_width - crop.width || crop.y > bitmap_height - crop.height ||
@@ -26,7 +42,7 @@ bool docked_presenter_frame_layout(int32_t drawable_width, int32_t drawable_heig
     switch (kind)
     {
     case DOCKED_PRESENTER_GAME:
-        viewport = framebuffer_viewport(drawable_width, drawable_height, 4);
+        viewport = framebuffer_viewport(drawable_width, drawable_height, upscale);
         break;
     case DOCKED_PRESENTER_MOVIE:
     case DOCKED_PRESENTER_SPLASH:
@@ -69,6 +85,9 @@ static struct {
     EGLContext context;
     bool egl_initialized;
     bool ready;
+    int32_t width, height;
+    unsigned upscale;
+    AppletOperationMode operation_mode;
     GLuint program;
     GLuint vertex_array;
     GLint max_texture_size;
@@ -93,7 +112,7 @@ static void log_message(const char *format, ...)
 
 static void log_egl_failure(const char *operation)
 {
-    log_message("Docked GPU: %s failed (EGL 0x%04x)", operation, (unsigned)eglGetError());
+    log_message("GPU presenter: %s failed (EGL 0x%04x)", operation, (unsigned)eglGetError());
 }
 
 void docked_presenter_close(void)
@@ -118,7 +137,7 @@ void docked_presenter_close(void)
         NWindow *window = presenter.window;
         Result result = nwindowSetDimensions(window, presenter.previous_width, presenter.previous_height);
         if (R_FAILED(result))
-            log_message("Docked GPU: could not restore window dimensions (libnx 0x%08x)", (unsigned)result);
+            log_message("GPU presenter: could not restore window dimensions (libnx 0x%08x)", (unsigned)result);
         if (!window->slots_configured)
         {
             // libnx disconnect clears format to zero, but ConfigureBuffer only
@@ -128,7 +147,7 @@ void docked_presenter_close(void)
             window->usage = 0;
             result = nwindowSetSwapInterval(window, presenter.previous_swap_interval);
             if (R_FAILED(result))
-                log_message("Docked GPU: could not restore swap interval (libnx 0x%08x)", (unsigned)result);
+                log_message("GPU presenter: could not restore swap interval (libnx 0x%08x)", (unsigned)result);
         }
     }
     // EGL_NO_DISPLAY, EGL_NO_CONTEXT and EGL_NO_SURFACE are null handles.
@@ -140,7 +159,7 @@ static GLuint compile_shader(GLenum type, const char *source)
     GLuint shader = glCreateShader(type);
     if (!shader)
     {
-        log_message("Docked GPU: glCreateShader(0x%x) failed (GL 0x%x)", type, glGetError());
+        log_message("GPU presenter: glCreateShader(0x%x) failed (GL 0x%x)", type, glGetError());
         return 0;
     }
     glShaderSource(shader, 1, &source, NULL);
@@ -151,7 +170,7 @@ static GLuint compile_shader(GLenum type, const char *source)
     {
         char details[320] = {0};
         glGetShaderInfoLog(shader, sizeof(details), NULL, details);
-        log_message("Docked GPU: shader 0x%x compile failed: %s", type, details);
+        log_message("GPU presenter: shader 0x%x compile failed: %s", type, details);
         glDeleteShader(shader);
         return 0;
     }
@@ -186,7 +205,7 @@ static bool create_draw_objects(void)
     presenter.program = glCreateProgram();
     if (!presenter.program)
     {
-        log_message("Docked GPU: glCreateProgram failed (GL 0x%x)", glGetError());
+        log_message("GPU presenter: glCreateProgram failed (GL 0x%x)", glGetError());
         return false;
     }
     glAttachShader(presenter.program, vertex_shader);
@@ -200,13 +219,13 @@ static bool create_draw_objects(void)
     {
         char details[320] = {0};
         glGetProgramInfoLog(presenter.program, sizeof(details), NULL, details);
-        log_message("Docked GPU: shader link failed: %s", details);
+        log_message("GPU presenter: shader link failed: %s", details);
         return false;
     }
     GLint sampler_location = glGetUniformLocation(presenter.program, "pixels");
     if (sampler_location < 0)
     {
-        log_message("Docked GPU: source texture uniform unavailable");
+        log_message("GPU presenter: source texture uniform unavailable");
         return false;
     }
     glUseProgram(presenter.program);
@@ -223,10 +242,10 @@ static bool create_draw_objects(void)
     glGetIntegerv(GL_MAX_VIEWPORT_DIMS, max_viewport);
     GLenum error = glGetError();
     if (error != GL_NO_ERROR || !presenter.vertex_array || !presenter.frame.name || !presenter.overlay.name ||
-        presenter.max_texture_size <= 0 || max_viewport[0] < DOCKED_PRESENTER_WIDTH ||
-        max_viewport[1] < DOCKED_PRESENTER_HEIGHT)
+        presenter.max_texture_size <= 0 || max_viewport[0] < presenter.width ||
+        max_viewport[1] < presenter.height)
     {
-        log_message("Docked GPU: GL setup failed (GL 0x%x, max texture %d, max viewport %dx%d)",
+        log_message("GPU presenter: GL setup failed (GL 0x%x, max texture %d, max viewport %dx%d)",
                     error, presenter.max_texture_size, max_viewport[0], max_viewport[1]);
         return false;
     }
@@ -246,72 +265,82 @@ static bool validate_drawable(bool announce)
     Result result = nwindowGetDimensions(presenter.window, &native_width, &native_height);
     if (R_FAILED(result))
     {
-        log_message("Docked GPU: drawable nwindowGetDimensions failed (libnx 0x%08x)", (unsigned)result);
+        log_message("GPU presenter: drawable nwindowGetDimensions failed (libnx 0x%08x)", (unsigned)result);
         return false;
     }
     // Switch Mesa 20.1.0 allocates all window buffers from nwindowGetDimensions
     // but does not populate _EGLSurface.Width/Height. Do not interpret 0x0 as
     // a renderable viewport or accept nonzero EGL dimensions that disagree.
     const bool buffers_registered = presenter.window->slots_configured != 0;
-    const bool valid = docked_presenter_validate_drawable(egl_width, egl_height, native_width,
-                                                          native_height, buffers_registered);
+    const bool valid = docked_presenter_validate_drawable(presenter.width, presenter.height, egl_width, egl_height,
+                                                          native_width, native_height, buffers_registered);
     if (announce || !valid)
-        log_message("Docked GPU: drawable %s: EGL %dx%d, native %ux%u, buffers=%s",
-                    valid ? "validated" : "rejected (requires 1920x1080)", egl_width, egl_height,
+        log_message("GPU presenter: drawable %s: requested %dx%d, EGL %dx%d, native %ux%u, buffers=%s",
+                    valid ? "validated" : "rejected", presenter.width, presenter.height, egl_width, egl_height,
                     native_width, native_height, buffers_registered ? "registered" : "missing");
     return valid;
 }
 
-bool docked_presenter_init(NWindow *window, DockedPresenterLog logger, void *log_user_data)
+bool docked_presenter_init(NWindow *window, int32_t width, int32_t height, unsigned upscale,
+                           DockedPresenterLog logger, void *log_user_data)
 {
     if (presenter.ready)
-        return !window || window == presenter.window;
+        return (!window || window == presenter.window) && width == presenter.width &&
+               height == presenter.height && upscale == presenter.upscale;
     if (presenter.window)
         return false; // A failed runtime presenter must be closed before reinitialization.
     presenter.logger = logger;
     presenter.log_user_data = log_user_data;
-    if (appletGetOperationMode() != AppletOperationMode_Console || eglGetCurrentContext() != EGL_NO_CONTEXT)
+    presenter.operation_mode = appletGetOperationMode();
+    const AppletType type = appletGetAppletType();
+    if (!supported_dimensions(width, height) ||
+        (height == DOCKED_PRESENTER_HEIGHT && presenter.operation_mode != AppletOperationMode_Console) ||
+        (type != AppletType_Application && type != AppletType_SystemApplication) ||
+        eglGetCurrentContext() != EGL_NO_CONTEXT)
     {
-        log_message("Docked GPU: requires docked mode and no other current EGL context");
+        log_message("GPU presenter: incompatible output, applet type or current EGL context");
         goto fail;
     }
+    presenter.width = width;
+    presenter.height = height;
+    presenter.upscale = upscale;
     const bool default_window = !window;
     if (default_window)
         window = nwindowGetDefault();
     if (!window || !nwindowIsValid(window) || window->slots_configured)
     {
-        log_message("Docked GPU: %s NWindow invalid or already has registered buffers",
+        log_message("GPU presenter: %s NWindow invalid or already has registered buffers",
                     default_window ? "default" : "explicit");
         goto fail;
     }
     if (window->transform || window->sticky_transform || window->crop.left || window->crop.top ||
         window->crop.right || window->crop.bottom)
     {
-        log_message("Docked GPU: NWindow must be uncropped and untransformed");
+        log_message("GPU presenter: NWindow must be uncropped and untransformed");
         goto fail;
     }
     u32 previous_width, previous_height;
     Result result = nwindowGetDimensions(window, &previous_width, &previous_height);
     if (R_FAILED(result))
     {
-        log_message("Docked GPU: nwindowGetDimensions failed (libnx 0x%08x)", (unsigned)result);
+        log_message("GPU presenter: nwindowGetDimensions failed (libnx 0x%08x)", (unsigned)result);
         goto fail;
     }
     // Keep the explicit overrides, including zero (use native defaults).
     presenter.previous_width = window->width;
     presenter.previous_height = window->height;
     presenter.previous_swap_interval = window->swap_interval;
-    result = nwindowSetDimensions(window, DOCKED_PRESENTER_WIDTH, DOCKED_PRESENTER_HEIGHT);
+    result = nwindowSetDimensions(window, width, height);
     if (R_FAILED(result))
     {
-        log_message("Docked GPU: nwindowSetDimensions(1920x1080) failed (libnx 0x%08x)", (unsigned)result);
+        log_message("GPU presenter: nwindowSetDimensions(%dx%d) failed (libnx 0x%08x)", width, height, (unsigned)result);
         goto fail;
     }
     presenter.window = window;
     window->format = UINT32_MAX;
     window->usage = 0;
-    log_message("Docked GPU: %s NWindow %ux%u, requested 1920x1080",
-                default_window ? "default" : "explicit", previous_width, previous_height);
+    log_message("GPU presenter: %s NWindow %ux%u, requested %dx%d",
+                default_window ? "default" : "explicit", previous_width, previous_height, width, height);
 
     const char *operation = "eglGetDisplay";
     presenter.display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
@@ -341,7 +370,7 @@ bool docked_presenter_init(NWindow *window, DockedPresenterLog logger, void *log
         goto egl_fail;
     if (count < 1)
     {
-        log_message("Docked GPU: EGL %d.%d advertises no ES3 RGBA8888 window config", major, minor);
+        log_message("GPU presenter: EGL %d.%d advertises no ES3 RGBA8888 window config", major, minor);
         goto fail;
     }
     EGLint config_id, color_bits, depth_bits, stencil_bits, samples;
@@ -352,11 +381,11 @@ bool docked_presenter_init(NWindow *window, DockedPresenterLog logger, void *log
         !eglGetConfigAttrib(presenter.display, config, EGL_STENCIL_SIZE, &stencil_bits) ||
         !eglGetConfigAttrib(presenter.display, config, EGL_SAMPLES, &samples))
         goto egl_fail;
-    log_message("Docked GPU: EGL %d.%d config %d: color=%d depth=%d stencil=%d samples=%d",
+    log_message("GPU presenter: EGL %d.%d config %d: color=%d depth=%d stencil=%d samples=%d",
                 major, minor, config_id, color_bits, depth_bits, stencil_bits, samples);
     if (color_bits != 32 || depth_bits != 0 || stencil_bits != 0 || samples != 0)
     {
-        log_message("Docked GPU: expected RGBA8888 without depth, stencil or multisampling");
+        log_message("GPU presenter: expected RGBA8888 without depth, stencil or multisampling");
         goto fail;
     }
 
@@ -380,8 +409,7 @@ bool docked_presenter_init(NWindow *window, DockedPresenterLog logger, void *log
     if (!create_draw_objects())
         goto fail;
     const char *renderer = (const char *)glGetString(GL_RENDERER);
-    log_message("Docked GPU: %s; game viewport 1280x960 at 320,60",
-                renderer ? renderer : "unknown GLES renderer");
+    log_message("GPU presenter: %s", renderer ? renderer : "unknown GLES renderer");
     presenter.ready = true;
     return true;
 
@@ -433,21 +461,21 @@ DockedPresenterResult docked_presenter_present(const uint32_t *pixels, int32_t b
 {
     if (!presenter.ready)
         return DOCKED_PRESENTER_UNAVAILABLE;
-    if (appletGetOperationMode() != AppletOperationMode_Console)
+    if (appletGetOperationMode() != presenter.operation_mode)
     {
-        log_message("Docked GPU: undocked; switching away from 1080p presenter");
-        goto unavailable;
+        log_message("GPU presenter: operation mode changed; releasing the old EGL surface");
+        return DOCKED_PRESENTER_MODE_CHANGED;
     }
     if (!validate_drawable(false))
         goto unavailable;
 
     DockedPresenterFrameLayout layout;
-    if (!pixels || !docked_presenter_frame_layout(DOCKED_PRESENTER_WIDTH, DOCKED_PRESENTER_HEIGHT, bitmap_width,
+    if (!pixels || !docked_presenter_frame_layout(presenter.width, presenter.height, presenter.upscale, bitmap_width,
                                                    bitmap_height, crop, kind, &layout) ||
         crop.width > presenter.max_texture_size || crop.height > presenter.max_texture_size ||
         (filter != FRAMEBUFFER_FILTER_NEAREST && filter != FRAMEBUFFER_FILTER_BILINEAR))
     {
-        log_message("Docked GPU: invalid frame bitmap=%dx%d crop=%d,%d %dx%d kind=%d filter=%d",
+        log_message("GPU presenter: invalid frame bitmap=%dx%d crop=%d,%d %dx%d kind=%d filter=%d",
                     bitmap_width, bitmap_height, crop.x, crop.y, crop.width, crop.height, (int)kind, (int)filter);
         return DOCKED_PRESENTER_INVALID_FRAME;
     }
@@ -460,14 +488,17 @@ DockedPresenterResult docked_presenter_present(const uint32_t *pixels, int32_t b
                     kind == DOCKED_PRESENTER_GAME && filter == FRAMEBUFFER_FILTER_BILINEAR ? GL_LINEAR : GL_NEAREST,
                     layout.gl_viewport);
     if (fps)
-        draw_fps_overlay(*fps, DOCKED_PRESENTER_HEIGHT);
+        draw_fps_overlay(*fps, presenter.height);
     GLenum error = glGetError();
     if (error != GL_NO_ERROR)
     {
-        log_message("Docked GPU: clear/upload/draw failed (GL 0x%x)", error);
+        log_message("GPU presenter: clear/upload/draw failed (GL 0x%x)", error);
         goto unavailable;
     }
-    if (!eglSwapBuffers(presenter.display, presenter.surface))
+    RESUME_BEGIN(swap);
+    const EGLBoolean swap_succeeded = eglSwapBuffers(presenter.display, presenter.surface);
+    RESUME_END(RESUME_SWAP, swap, swap_succeeded, !swap_succeeded);
+    if (!swap_succeeded)
     {
         log_egl_failure("eglSwapBuffers");
         goto unavailable;
@@ -475,7 +506,7 @@ DockedPresenterResult docked_presenter_present(const uint32_t *pixels, int32_t b
     if (!presenter.submitted_frame)
     {
         const FramebufferViewport viewport = layout.gl_viewport;
-        log_message("Docked GPU: first swap accepted; kind=%d crop=%d,%d %dx%d viewport(GL)=%d,%d %dx%d",
+        log_message("GPU presenter: first swap accepted; kind=%d crop=%d,%d %dx%d viewport(GL)=%d,%d %dx%d",
                     (int)kind, crop.x, crop.y, crop.width, crop.height,
                     viewport.x, viewport.y, viewport.width, viewport.height);
         presenter.submitted_frame = true;

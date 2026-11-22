@@ -23,9 +23,18 @@ GAME := ../src
 SWITCH_PLATFORM := $(GAME)/platform/switch
 XPORT ?= $(GAME)/xport
 RUNTIME := $(XPORT)/src
+RESUME_DIAG ?= clock
+ifeq ($(RESUME_DIAG),off)
+BUILD := build/resume-off
+else ifeq ($(RESUME_DIAG),trace)
+BUILD := build-resume-trace
+else ifeq ($(RESUME_DIAG),clock)
 BUILD := build
+else
+$(error RESUME_DIAG must be off, trace, or clock)
+endif
 NAME := DemolitionRacer
-VERSION := 0.2.3
+VERSION := 0.2.4
 PYTHON ?= python
 BINARY := $(BUILD)/$(NAME)
 BUILD_MAKEFILE := $(firstword $(MAKEFILE_LIST))
@@ -63,6 +72,14 @@ GAME_OBJS := $(GAME_SOURCES:%.c=$(BUILD)/game/%.o)
 RUNTIME_OBJS := $(RUNTIME_SOURCES:%.c=$(BUILD)/xport/%.o)
 OBJS := $(GAME_OBJS) $(RUNTIME_OBJS) $(BUILD)/platform.o $(BUILD)/diagnostics.o $(BUILD)/framebuffer_blit.o $(BUILD)/asset_preload.o $(BUILD)/docked_presenter.o $(BUILD)/splash.o
 
+ifneq ($(RESUME_DIAG),off)
+OBJS += $(BUILD)/resume_switch.o
+RESUME_FLAGS := -DDRACER_RESUME_TRACE -I"$(SWITCH_PLATFORM)"
+ifeq ($(RESUME_DIAG),clock)
+RESUME_FLAGS += -DDRACER_RESUME_CLOCK
+endif
+endif
+
 ARCH := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 DEFINES := -D__SWITCH__ -DAP_SWITCH -DXPORT_NATIVE -DFIELD_RATE=60 \
  -DWND_WIDTH=960 -DWND_HEIGHT=720 -DWND_TITLE='"Demolition Racer"' -DSHORT_NAME='"DR"' \
@@ -72,7 +89,7 @@ CFLAGS ?= -O2 -g -pipe
 # The PsyQ-compatible integer trig names overlap GCC's complex math builtins.
 COMPAT := -fms-extensions -funsigned-char -fno-strict-aliasing -fwrapv \
  -fno-builtin-ccos -fno-builtin-csin -fno-builtin-catan
-COMPILE.c = "$(CC)" $(ARCH) $(DEFINES) $(INCLUDES) $(CPPFLAGS) $(CFLAGS) -std=gnu11 $(COMPAT) \
+COMPILE.c = "$(CC)" $(ARCH) $(DEFINES) $(INCLUDES) $(CPPFLAGS) $(RESUME_FLAGS) $(CFLAGS) -std=gnu11 $(COMPAT) \
  -ffunction-sections -fdata-sections -MMD -MP -c
 LIBS := -lEGL -lGLESv2 -lglapi -ldrm_nouveau -lstdc++ -lnx -lm
 
@@ -84,6 +101,16 @@ objects: $(GAME_OBJS) $(RUNTIME_OBJS)
 $(BUILD)/game/%.o: $(GAME)/%.c $(BUILD_MAKEFILE)
 	@mkdir -p "$(@D)"
 	$(COMPILE.c) "$<" -o "$@"
+
+ifneq ($(RESUME_DIAG),off)
+# Instrument only a generated copy of the pinned runtime; never patch src/xport.
+$(BUILD)/xport/psx.c: $(RUNTIME)/psx.c ../tools/instrument_resume_psx.py $(BUILD_MAKEFILE)
+	@mkdir -p "$(@D)"
+	$(PYTHON) ../tools/instrument_resume_psx.py "$<" "$@"
+
+$(BUILD)/xport/psx.o: $(BUILD)/xport/psx.c
+	$(COMPILE.c) "$<" -o "$@"
+endif
 
 $(BUILD)/xport/%.o: $(RUNTIME)/%.c $(BUILD_MAKEFILE)
 	@mkdir -p "$(@D)"
@@ -97,7 +124,7 @@ $(BUILD)/game_icon.jpg $(BUILD)/game_splash.bgra &: ../game_icon.png ../game_spl
 	$(PYTHON) ../tools/prepare_switch_art.py ../game_icon.png ../game_splash.png "$(BUILD)"
 
 $(BUILD)/splash.o: $(SWITCH_PLATFORM)/splash.S $(BUILD)/game_splash.bgra
-	"$(CC)" $(ARCH) -pipe -c "$<" -o "$@"
+	"$(CC)" $(ARCH) -pipe -DDRACER_SPLASH_FILE='"$(BUILD)/game_splash.bgra"' -c "$<" -o "$@"
 
 # Windows GCC/collect2 need a writable native temp path even for an object-only link.
 # Use the build tree so this works independently of the SDK shell's /tmp mount.

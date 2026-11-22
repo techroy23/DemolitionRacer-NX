@@ -10,8 +10,42 @@ static FILE *stream_with(const char *text)
     return stream;
 }
 
+static void test_log_levels(void)
+{
+    const char *const names[] = {"false", "FATAL", "ERROR", "WARN", "INFO", "DEBUG", "TRACE"};
+    DiagnosticLevel levels[sizeof(names) / sizeof(*names)];
+    for (size_t rank = 0; rank < sizeof(names) / sizeof(*names); ++rank)
+    {
+        char setting[32];
+        snprintf(setting, sizeof(setting), "LOG: %s\n", names[rank]);
+        FILE *settings = stream_with(setting);
+        levels[rank] = diagnostics_read_settings(settings);
+        fclose(settings);
+        assert(levels[rank] != DIAGNOSTICS_INVALID);
+        assert(strcmp(diagnostics_level_name(levels[rank]), names[rank]) == 0);
+    }
+
+    for (size_t threshold = 0; threshold < sizeof(names) / sizeof(*names); ++threshold)
+    {
+        FILE *output = tmpfile();
+        assert(output);
+        for (size_t rank = 1; rank < sizeof(names) / sizeof(*names); ++rank)
+            assert(diagnostics_write(output, levels[threshold], levels[rank], "event"));
+        rewind(output);
+        for (size_t rank = 1; rank <= threshold; ++rank)
+        {
+            char line[32], expected[32];
+            snprintf(expected, sizeof(expected), "[%s] event\n", names[rank]);
+            assert(fgets(line, sizeof(line), output) && strcmp(line, expected) == 0);
+        }
+        assert(fgetc(output) == EOF);
+        fclose(output);
+    }
+}
+
 int main(void)
 {
+    test_log_levels();
     FILE *options = stream_with("LOG: DEBUG\nFPS_OVERLAY: true\nUPSCALE: x4\nDISPLAY_FILTER: BILINEAR\n");
     DiagnosticSettings config;
     assert(diagnostics_parse_settings(options, &config));

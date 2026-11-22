@@ -1,14 +1,35 @@
-# Demolition Racer Switch settings. Read when the NRO starts.
-# LOG: DEBUG (asset and startup details), INFO (major events), or ERROR.
+# Keep this file beside DemolitionRacer.nro. Restart the game after editing.
+
+# Logs are saved beside the NRO. Use false to write no log file.
+# Each level also includes all levels above it in this list:
+# FATAL = failures that stop the app
+# ERROR = operations that failed
+# WARN  = unexpected issues the app can recover from
+# INFO  = normal events like startup and loading
+# DEBUG = troubleshooting details
+# TRACE = per-frame timing and other details; use for short tests
 LOG: DEBUG
-# The FPS counter measures Switch framebuffer submissions, not unique game frames.
-FPS_OVERLAY: false
-# FIT (default), x2 (640x480), x3 (960x720), or x4 (1280x960 on supported 1080p docks).
-UPSCALE: FIT
-# NEAREST keeps the original pixels; BILINEAR softens the race image and HUD.
-DISPLAY_FILTER: NEAREST
-# The worker helps software BILINEAR scaling. Docked GPU x4 does not use it.
-DISPLAY_WORKER: false
-# Try one geometry option at a time with NEAREST as the baseline.
+
+# true shows the on-screen FPS counter; false hides it.
+# It counts frames sent to the display, including repeats.
+FPS_OVERLAY: true
+
+# Picture size: FIT fills the available space without stretching.
+# x2 = 640x480, x3 = 960x720, x4 = 1280x960 on supported 1080p TVs.
+# Handheld mode caps x4 at x3.
+UPSCALE: x4
+
+# NEAREST keeps pixels sharp. BILINEAR smooths the race image and its gauges.
+DISPLAY_FILTER: BILINEAR
+
+# true lets a second CPU core help with BILINEAR if available; false uses one.
+# This does not affect NEAREST or docked GPU scaling.
+DISPLAY_WORKER: true
+
+# STOCK uses the original car detail distance. EXTENDED keeps detailed cars
+# visible a little farther away.
 CAR_LOD: STOCK
+
+# STOCK uses the original scenery distance. EXTENDED can show more of the
+# track ahead on supported circuits without loading extra sections.
 TRACK_DISTANCE: STOCK

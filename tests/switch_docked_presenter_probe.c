@@ -55,7 +55,8 @@ int main(void)
         if (step == 3)
             docked_presenter_close();
         if ((step == 0 || step == 3) &&
-            !docked_presenter_init(step == 0 ? NULL : nwindowGetDefault(), log_message, log_file))
+            !docked_presenter_init(step == 0 ? NULL : nwindowGetDefault(),
+                                   DOCKED_PRESENTER_WIDTH, DOCKED_PRESENTER_HEIGHT, 4, log_message, log_file))
         {
             exit_status = 2;
             break;

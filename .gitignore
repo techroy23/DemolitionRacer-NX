@@ -10,6 +10,7 @@
 
 # Build and local tooling outputs
 /switch/build/
+/switch/build-resume-trace/
 /_build/
 **/__pycache__/
 *.nro

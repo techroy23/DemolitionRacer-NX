@@ -5,6 +5,8 @@
 
 #define DOCKED_PRESENTER_WIDTH 1920
 #define DOCKED_PRESENTER_HEIGHT 1080
+#define HANDHELD_PRESENTER_WIDTH 1280
+#define HANDHELD_PRESENTER_HEIGHT 720
 
 typedef enum {
     DOCKED_PRESENTER_GAME,
@@ -18,14 +20,19 @@ typedef struct {
     int32_t unpack_row_length_pixels; // Source pitch, not the crop width.
 } DockedPresenterFrameLayout;
 
+// Select the software fallback dimensions too. Returns whether to try GLES.
+bool docked_presenter_select_output(bool docked, bool full_application, unsigned upscale,
+                                    int32_t *width, int32_t *height);
+
 // EGL may report 0x0 on devkitPro Switch Mesa. Accept it only with a
-// successfully created window surface and registered 1920x1080 native buffers.
-bool docked_presenter_validate_drawable(int32_t egl_width, int32_t egl_height,
+// successfully created window surface and registered native buffers matching the requested output.
+bool docked_presenter_validate_drawable(int32_t width, int32_t height,
+                                         int32_t egl_width, int32_t egl_height,
                                          uint32_t native_width, uint32_t native_height,
                                          bool native_buffers_registered);
 
-// Portable geometry and upload layout. Rejects non-1080p drawables, even for movies.
-bool docked_presenter_frame_layout(int32_t drawable_width, int32_t drawable_height,
+// Portable geometry and upload layout. Accepts only the supported 720p and 1080p drawables.
+bool docked_presenter_frame_layout(int32_t drawable_width, int32_t drawable_height, unsigned upscale,
                                    int32_t bitmap_width, int32_t bitmap_height,
                                    FramebufferSource crop, DockedPresenterFrameKind kind,
                                    DockedPresenterFrameLayout *layout);
@@ -36,17 +43,19 @@ bool docked_presenter_frame_layout(int32_t drawable_width, int32_t drawable_heig
 typedef enum {
     DOCKED_PRESENTER_SUBMITTED,      // EGL accepted the swap; not proof of scanout.
     DOCKED_PRESENTER_INVALID_FRAME,  // Caller supplied an invalid frame; context remains usable.
+    DOCKED_PRESENTER_MODE_CHANGED,   // Recreate the presenter for the current mode.
     DOCKED_PRESENTER_UNAVAILABLE     // Close and switch to the existing software presenter.
 } DockedPresenterResult;
 
 typedef void (*DockedPresenterLog)(const char *message, void *user_data);
 
-// Singleton; use on one presentation thread. Select only for docked UPSCALE=4.
+// Singleton; use on one presentation thread. For full applications; choose 720p or docked 1080p.
 // NULL selects nwindowGetDefault(); otherwise borrow a valid NWindow through close.
 // Require an exclusive, uncropped, untransformed window without registered
 // buffers and no other EGL user. The synchronous optional logger must not reenter the presenter.
 // On init failure any partially opened presenter is closed before returning.
-bool docked_presenter_init(NWindow *window, DockedPresenterLog logger, void *log_user_data);
+bool docked_presenter_init(NWindow *window, int32_t width, int32_t height, unsigned upscale,
+                           DockedPresenterLog logger, void *log_user_data);
 
 // Bitmap is immutable, top-down, tightly row-packed 0xAARRGGBB (BGRA bytes),
 // valid through this call. Alpha is ignored. Pass BILINEAR only for a race

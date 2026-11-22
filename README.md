@@ -4,6 +4,8 @@ This is an unofficial homebrew port of the US PlayStation game for the first-gen
 
 **The game is not included.** This repository contains reconstructed port code, not the original game's source code, disc image, or retail game assets. You must supply your own disc dump. The port runs on the Switch without a PlayStation emulator or BIOS.
 
+**New in [v0.2.4](https://github.com/techroy23/DemolitionRacer-NX/releases/tag/v0.2.4):** Fixes a HOME/sleep resume freeze and restores GPU output when docking without restarting the game. If you already have the port, replace only the NRO.
+
 ## 1. Make the `DATA` folder
 
 If you don't already have the project files, open the [latest release page](https://github.com/techroy23/DemolitionRacer-NX/releases/latest), download **Source code (zip)** under **Assets**, and extract it. The ZIP includes the Python script and `settings.yaml`. You don't need to build anything.
@@ -54,7 +56,7 @@ Copy the [settings template](switch/settings.yaml) from the source ZIP, or downl
 | `CAR_LOD` | `STOCK` (default) or `EXTENDED` to keep the original near-car model visible a little farther away. |
 | `TRACK_DISTANCE` | `STOCK` (default) or `EXTENDED` to draw more of the already-loaded track where supported. |
 | `FPS_OVERLAY` | `false` (default) or `true`. Shows display submissions per second, not unique game frames. |
-| `LOG` | `INFO` by default without the file. The template uses `DEBUG` for troubleshooting; `ERROR` logs only errors. |
+| `LOG` | `false` disables log files. Otherwise choose `FATAL`, `ERROR`, `WARN`, `INFO`, `DEBUG`, or `TRACE`, from least to most detail. The template uses `DEBUG`; the built-in default is `INFO`. |
 
 When updating, replace only the NRO and keep your existing `settings.yaml`, `DATA/`, and `SAVE/`. Missing settings use their defaults, so you can add new options without replacing the file.
 
