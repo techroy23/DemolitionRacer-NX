@@ -1,6 +1,6 @@
 # HOME / sleep diagnostics
 
-The production build still uses the program-active clock by default in v0.2.5. For a stock resume comparison, leave both [experimental graphics markers](graphics.md#experimental-solo-race-renderer) absent. Test resume with the experimental renderer in a separate run. In the devkitPro SDK shell (tested with libnx 4.12.0):
+The production build still uses the program-active clock by default in v0.2.5. Test resume in the [solo GPU path](graphics.md#solo-race-renderer) separately from stock paths. For a stock comparison on the same solo route with the same settings, use v0.2.4. In the devkitPro SDK shell (tested with libnx 4.12.0):
 
 ```sh
 make -C switch RESUME_DIAG=trace

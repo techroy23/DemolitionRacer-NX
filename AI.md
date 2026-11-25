@@ -6,4 +6,4 @@
 4. Use the user's `DemolitionRacer.nro`, download the prebuilt NRO from the [GitHub release](https://github.com/techroy23/DemolitionRacer-NX/releases/latest), or follow the [build instructions](technical.md#build-the-switch-app). Place the NRO and a copy of [switch/settings.yaml](switch/settings.yaml) beside `DATA/`. Preserve any existing `settings.yaml`, `SAVE/`, and logs.
 5. Verify the app folder contains the NRO, settings, and `DATA/`. Follow the [SD card instructions](README.md#3-copy-it-to-your-switch) once the user identifies the correct card. Do not claim that the port ran on the Switch unless it was actually launched there.
 
-For an existing install, replace only `DemolitionRacer.nro`. Keep `DATA/`, `SAVE/`, `settings.yaml`, and dated logs on the card. A normal install does not require any experimental `.enable` files; do not create them as part of installation.
+For an existing install, replace only `DemolitionRacer.nro`. Keep `DATA/`, `SAVE/`, `settings.yaml`, and dated logs on the card. No extra configuration files are required.

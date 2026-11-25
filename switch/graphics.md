@@ -2,15 +2,17 @@
 
 ## Default path (v0.2.5)
 
-The port prefers EGL/GLES for presentation outside applet mode. It uploads the finished CPU frame and preserves the centered 4:3 race viewport. At `x4`, handheld uses 1280×720 output with a 960×720 game viewport; docked uses 1920×1080 output with a 1280×960 game viewport. On an operation-mode change, it closes the old EGL producer before trying to rebuild for the new output. Applet mode and recoverable GPU failures use the libnx framebuffer. The original software rasterizer still renders the scene.
+The port prefers EGL/GLES for presentation outside applet mode. It uploads finished CPU frames or presents a GPU texture from the solo race renderer, preserving the centered 4:3 race viewport. At `x4`, handheld uses 1280×720 output with a 960×720 game viewport; docked uses 1920×1080 output with a 1280×960 game viewport. On an operation-mode change, it closes the old EGL producer before trying to rebuild for the new output. Applet mode and recoverable presentation failures can use the libnx framebuffer.
 
-## Experimental solo race renderer
+## Solo race renderer
 
-Stock CPU rasterization and affine texture mapping are unchanged by default. To try GPU rasterization in eligible single-player races, create an empty file named `experimental-live-native-single-player-gpu-race.enable` beside the NRO. To also try perspective correction, create `experimental-race-perspective.enable` there too. Relaunch after adding or removing either file. Keep `CAR_LOD` and `TRACK_DISTANCE` at `STOCK`; the GPU path also requires an active GLES presenter and excludes split-screen, demos, and replay mode. Remove both markers and relaunch to return to the default path.
+GPU rasterization with perspective correction is automatic in eligible solo races. No settings changes or marker files are required, and any old `.enable` files are ignored. The path requires an active GLES presenter and `CAR_LOD` and `TRACK_DISTANCE` at their `STOCK` defaults. Menus, movies, loading screens, split-screen, demos, replay mode, and unsupported render states use stock rasterization. There is no new renderer switch.
+
+Recoverable failures keep or restore the stock path. If the renderer cannot guarantee correct VRAM contents, it stops rather than retrying a possibly partial GPU draw on the CPU.
 
 Perspective correction uses projection depth for eligible textured track triangles and quads, including near subdivision leaves and unsplit near parents. Invalid or saturated projections remain affine. Corrected texels affect only the displayed image: texture feedback, game-visible VRAM reads, and handoff to the stock renderer retain stock affine values. This does not change physics, the camera, or draw distance.
 
-For a comparison, keep the GPU rasterizer marker present and toggle only the perspective marker between runs on the same route and camera. Use `LOG: INFO` or `DEBUG`. Look for the marker, eligibility, and `borrowed-texture` counts in the dated log. Submissions do not measure scanout or corrected pixels. See the [OLED evidence](../PLAN.MD#v025-release-evidence) for what was tested.
+Use `LOG: INFO` or `DEBUG` and check the dated log for race eligibility, platform readiness, actual GPU ownership, any stock handoff, and `borrowed-texture` counts. Submissions do not measure scanout or corrected pixels. For a stock comparison with the same route, camera, and settings, use v0.2.4. See the [OLED evidence](../PLAN.MD#v025-release-evidence) for what was tested.
 
 ## Original framebuffer path
 

@@ -4,7 +4,7 @@ This is an unofficial homebrew port of the US PlayStation game for the first-gen
 
 **The game is not included.** This repository contains reconstructed port code, not the original game's source code, disc image, or retail game assets. You must supply your own disc dump. The port runs on the Switch without a PlayStation emulator or BIOS.
 
-**New in v0.2.5:** The [experimental solo race renderer](switch/graphics.md#experimental-solo-race-renderer) adds optional perspective correction to reduce close-up texture skew on eligible track surfaces. The original look remains the default. If you already have the port, replace only the NRO.
+**New in v0.2.5:** Eligible solo races use [GPU rasterization with perspective correction](switch/graphics.md#solo-race-renderer) by default, reducing close-up texture skew on eligible track surfaces. No extra configuration files are needed. If you already have the port, replace only the NRO.
 
 ## 1. Make the `DATA` folder
 

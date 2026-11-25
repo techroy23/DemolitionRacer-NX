@@ -39,7 +39,6 @@ static const char *asset_preload_phase;
 static unsigned asset_preload_hits;
 static uint64 present_attempts, presented_frames, failed_frames, nonblack_frames;
 static bool race_display_active;
-static bool live_native_race_gpu_requested, live_race_perspective_requested;
 void switch_live_race_gpu_shutdown(void);
 void switch_live_race_gpu_before_stock_present(void);
 static uint64 race_display_start, race_display_start_frames, race_display_start_failures;
@@ -300,13 +299,6 @@ static void start_diagnostics(void)
     if (settings)
         fclose(settings);
     diagnostic_threshold = game_settings.level;
-    FILE *live_gpu_marker = fopen(GAME_DIR "/experimental-live-native-single-player-gpu-race.enable", "rb");
-    const int live_gpu_marker_error = live_gpu_marker ? 0 : errno;
-    live_native_race_gpu_requested = live_gpu_marker != NULL;
-    if (live_gpu_marker) fclose(live_gpu_marker);
-    FILE *perspective_marker=fopen(GAME_DIR "/experimental-race-perspective.enable","rb");
-    live_race_perspective_requested=perspective_marker!=NULL;
-    if (perspective_marker) fclose(perspective_marker);
     if (diagnostic_threshold == DIAGNOSTICS_OFF)
         return;
 
@@ -356,9 +348,7 @@ static void start_diagnostics(void)
     switch_log(DIAGNOSTICS_INFO, "Graphics experiment: DISPLAY_FILTER=%s DISPLAY_WORKER=%s CAR_LOD=%s TRACK_DISTANCE=%s; scope=race",
                display_filter_name(game_settings.display_filter), game_settings.display_worker ? "true" : "false",
                game_settings.car_lod_extended ? "EXTENDED" : "STOCK", game_settings.track_distance_extended ? "EXTENDED" : "STOCK");
-    switch_log(DIAGNOSTICS_INFO, "Live race GPU entry fix: marker=%s errno=%d",
-               live_native_race_gpu_requested ? "found" : "not-opened", live_gpu_marker_error);
-    switch_log(DIAGNOSTICS_INFO,"Race perspective marker=%s",live_race_perspective_requested ? "found" : "not-opened");
+    switch_log(DIAGNOSTICS_INFO, "Live race GPU: automatic for eligible solo races (presentation perspective)");
 }
 
 void switch_record_collision_response(uint64 duration_microseconds)
@@ -881,13 +871,13 @@ static void record_submission_fps(uint64 submitted_us)
 
 bool switch_live_race_gpu_permitted(void)
 {
-    return live_native_race_gpu_requested && video_initialized && gpu_active && !headless && race_display_active &&
+    return video_initialized && gpu_active && !headless && race_display_active &&
            !game_settings.car_lod_extended && !game_settings.track_distance_extended;
 }
 
 bool switch_live_race_perspective_permitted(void)
 {
-    return live_race_perspective_requested && switch_live_race_gpu_permitted();
+    return switch_live_race_gpu_permitted();
 }
 
 void switch_live_race_gpu_log(const char *message)
@@ -898,10 +888,9 @@ void switch_live_race_gpu_log(const char *message)
 void switch_live_race_gpu_entry_log(bool eligible, uint32 racers, uint32 split_screen,
                                     uint32 demo_mode, uint32 replay_mode)
 {
-    if (live_native_race_gpu_requested)
-        switch_log(DIAGNOSTICS_INFO, "Live race GPU: scope=%s racers=%u split-screen=%u demo=%u replay=%u platform=%s",
-                   eligible ? "eligible" : "ineligible", (unsigned)racers, (unsigned)split_screen,
-                   (unsigned)demo_mode, (unsigned)replay_mode, switch_live_race_gpu_permitted() ? "ready" : "not-ready");
+    switch_log(DIAGNOSTICS_INFO, "Live race GPU: scope=%s racers=%u split-screen=%u demo=%u replay=%u platform=%s",
+               eligible ? "eligible" : "ineligible", (unsigned)racers, (unsigned)split_screen,
+               (unsigned)demo_mode, (unsigned)replay_mode, switch_live_race_gpu_permitted() ? "ready" : "not-ready");
 }
 
 DockedPresenterResult switch_present_race_texture(const DockedPresenterBorrowedTexture *texture,

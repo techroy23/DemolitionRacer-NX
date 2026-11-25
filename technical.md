@@ -9,7 +9,7 @@
 | `switch/` | Switch build rules and default configuration; compiled artifacts go in `switch/build/`. |
 | `tools/`, `tests/` | Disc extraction, artwork preparation, packaging, and host tests. |
 
-The Switch build compiles the game to AArch64 and links the needed compatibility services. It does not execute the retail MIPS instructions or use a retail BIOS. Some files extracted from the disc, including PS1 executables, are read as data. The Switch backend keeps the original 4:3 race view. It prefers EGL/GLES presentation in full-memory handheld and docked launches and falls back to libnx when needed. GPU scaling itself does not change race cadence or move triangle rasterization to the GPU. A separate [experimental solo race renderer](switch/graphics.md#experimental-solo-race-renderer) can do GPU rasterization when explicitly enabled.
+The Switch build compiles the game to AArch64 and links the needed compatibility services. It does not execute the retail MIPS instructions or use a retail BIOS. Some files extracted from the disc, including PS1 executables, are read as data. The Switch backend keeps the original 4:3 race view. It prefers EGL/GLES presentation in full-memory handheld and docked launches and falls back to libnx when needed. GPU scaling itself does not change race cadence or move triangle rasterization to the GPU. The separate [solo race renderer](switch/graphics.md#solo-race-renderer) automatically handles eligible races with GPU rasterization and presentation-only perspective correction.
 
 ## Build the Switch app
 

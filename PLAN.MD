@@ -57,7 +57,7 @@ Keep these changes on separate local test paths. Fix HOME and sleep resume first
 
 Use the GPU for presentation whenever it is available. First extend the existing GLES presenter to handheld and test it independently of the resume change. This moves scaling and presentation off the CPU; it does not move the PS1 triangle rasterizer. Keep libnx software presentation as the fallback, with automatic CPU work sharing only when it can help. Keep game logic, physics, and audio on the CPU.
 
-For actual GPU race rendering, prove opaque track textures and geometry AA in a standalone probe first. Then compare an opt-in race pass with the stock renderer, checking palette lookups, transparency, draw order, and HUD behavior before promoting it. Treat `x16` anisotropy, MSAA sample counts, and `x32` tessellation as requested limits, not promises of hardware support or performance. Leave enhancements off by default until the stock path and resume tests pass.
+For additional GPU race graphics work, test candidate changes in standalone probes first. Compare against stock, checking palette lookups, transparency, draw order, and HUD behavior before promoting them. Treat `x16` anisotropy, MSAA sample counts, and `x32` tessellation as requested limits, not promises of hardware support or performance. Leave these additional enhancements off by default until the stock path and resume tests pass.
 
 | Workstream | Work | OLED acceptance |
 | --- | --- | --- |
@@ -77,7 +77,7 @@ Evidence from `DemolitionRacer_2026-11-22_19-15-56.log`: the last normal video s
 ## v0.2.5 release evidence
 
 - The owner reported that the close-up texture skew was gone in the tested OLED run with both experimental markers enabled. The near test NRO logged 6,263 borrowed GPU textures out of 6,265 race submissions, with zero failed video submissions. These are submission counts, not measured refresh, unique frames, or corrected pixels.
-- The release rebuild uses the same rendering sources with normal launcher metadata and artwork. That OLED run did not exercise the exact release NRO, other circuits, or lifecycle transitions with the experimental renderer. Stock rendering remains the fidelity reference.
+- The v0.2.5 default-on rebuild uses the same renderer with normal launcher metadata and artwork; it no longer checks either marker. That OLED run did not exercise the exact rebuilt NRO, other circuits, or lifecycle transitions with the solo GPU renderer. Stock rendering remains the fidelity reference.
 
 ## Sources
 

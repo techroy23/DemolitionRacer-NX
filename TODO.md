@@ -10,8 +10,8 @@ Status after `v0.2.5`. Checked items are shipped or verified as described. Unche
 
 ## Graphics
 
-- [x] **Near-track perspective correction:** Shipped behind both [experimental markers](switch/graphics.md#experimental-solo-race-renderer). The owner confirmed the close-up skew was gone in the tested OLED run.
-- [ ] **Experimental renderer coverage:** Compare the exact release NRO against stock on more circuits and cameras. Check dock transitions and HOME/sleep separately and measure pacing and audio overruns. Do not infer visible coverage from metadata or submission counts.
+- [x] **Near-track perspective correction:** On by default in the [eligible solo GPU path](switch/graphics.md#solo-race-renderer). The owner confirmed the close-up skew was gone in the opt-in OLED test build.
+- [ ] **Solo GPU renderer coverage:** Compare the exact release NRO against stock on more circuits and cameras. Check dock transitions and HOME/sleep separately and measure pacing and audio overruns. Do not infer visible coverage from metadata or submission counts.
 - [x] **Car LOD:** Shipped opt-in `CAR_LOD: EXTENDED`. The original near model and its effects stay visible slightly farther out. The docked OLED test logged both near and far draws.
 - [ ] **Car LOD comparison:** Compare `STOCK` and `EXTENDED` with `NEAREST` and stock track distance. Check near-model effects, crowded grids, collisions, and frame time.
 - [x] **Track draw distance:** Shipped opt-in `TRACK_DISTANCE: EXTENDED`, limited to already-loaded track scenery. The docked OLED test logged nonzero extra geometry.
