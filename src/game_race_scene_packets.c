@@ -41,6 +41,10 @@ static sint16 scene_packet_clip(uint32 screen)
     return (sint16)result;
 }
 
+#if defined(AP_SWITCH)
+#include "game_race_scene_perspective.h"
+#endif
+
 uint32 scene_800456AC(uint32 packet)
 {
     uint32 stream, vertices, ordering, base, dx, dy, dz;
@@ -82,7 +86,15 @@ uint32 scene_800456AC(uint32 packet)
                 scene_packet_vertex(&vertex[i], vertices + (uint32)r_u8(stream + (quad ? 12u : 10u) + i) * 8u, dx, dy, dz);
             for (i = 0u; i < 3u; ++i)
                 scene_packet_load_vertex(&vertex[i], i * 2u);
+#if defined(AP_SWITCH)
+            uint32 projective_depths[4];
+            const bool collect=switch_race_perspective_collecting();
+            bool rtps_ok=true;
+#endif
             xport_gte_execute(0x280030u);
+#if defined(AP_SWITCH)
+            const bool rtpt_ok=collect && scene_read_projective_depths(projective_depths,17u,3u);
+#endif
             xport_gte_execute(0x1400006u);
             area = (sint32)xport_gte_read_data(24u);
             if (!quad && area > 0)
@@ -107,6 +119,11 @@ uint32 scene_800456AC(uint32 packet)
             {
                 scene_packet_load_vertex(&vertex[3], 0u);
                 xport_gte_execute(0x180001u);
+#if defined(AP_SWITCH)
+                // RTPS shifts both FIFOs: SZ0..SZ3 now match packet 0..3.
+                // Read the new SZ3 and FLAG before NCLIP/AVSZ4.
+                if (collect) rtps_ok=scene_read_projective_depths(projective_depths+3,19u,1u);
+#endif
                 xport_gte_execute(0x1400006u);
                 if (area > 0 && (sint32)xport_gte_read_data(24u) < 0)
                 {
@@ -140,6 +157,9 @@ uint32 scene_800456AC(uint32 packet)
             }
             if (depth < (sint32)(threshold * 4u))
             {
+#if defined(AP_SWITCH)
+                if (collect) switch_race_perspective_fallback(vertex_count, RACE_PERSPECTIVE_NEAR_PARENT, RACE_PERSPECTIVE_SUBDIVIDE);
+#endif
                 uint32 emitted;
                 header.ordering = ordering;
                 header.color = quad ? colors[0] & 0x03FFFFFFu : colors[0];
@@ -182,6 +202,16 @@ uint32 scene_800456AC(uint32 packet)
                 base = r_u32(bucket) & 0xFF000000u;
                 w_u32(0x80065570u, r_u32(0x80065570u) + bytes);
                 w_u32(bucket, base | (output & 0x00FFFFFFu));
+#if defined(AP_SWITCH)
+                if (collect) {
+                    /* If the helper returned no split, these are still the
+                     * original packet vertices, even if it rotated face. */
+                    const bool no_split = depth < (sint32)(threshold * 4u);
+                    scene_record_projected_face(output, shaded ? 12u : 8u, vertex_count,
+                        projective_depths, rtpt_ok, rtps_ok, true,
+                        no_split ? RACE_PERSPECTIVE_NEAR_PARENT : RACE_PERSPECTIVE_DIRECT);
+                }
+#endif
             }
             stream += stride;
         }
@@ -239,7 +269,15 @@ uint32 scene_packet_far_core(uint32 packet, sint32 relative_x, sint32 relative_y
                 if (quad)
                     w_u16(output + 48u, r_u16(stream + 10u));
             }
+#if defined(AP_SWITCH)
+            uint32 projective_depths[4];
+            const bool collect=switch_race_perspective_collecting();
+            bool rtps_ok=true;
+#endif
             xport_gte_execute(0x280030u);
+#if defined(AP_SWITCH)
+            const bool rtpt_ok=collect && scene_read_projective_depths(projective_depths,17u,3u);
+#endif
             if (quad)
             {
                 /* Original pipeline prefetches the next face before testing this face */
@@ -269,6 +307,9 @@ uint32 scene_packet_far_core(uint32 packet, sint32 relative_x, sint32 relative_y
                 scene_packet_load_vertex(&vertex[3], 0u);
                 result = shaded ? 0x0C000000u : vertex_base + (uint32)r_u8(stream + 15u) * 8u;
                 xport_gte_execute(0x180001u);
+#if defined(AP_SWITCH)
+                if (collect) rtps_ok=scene_read_projective_depths(projective_depths+3,19u,1u);
+#endif
                 if (!shaded)
                 {
                     colors[0] = r_u32(0x800835D4u + (uint32)r_u8(stream + 20u) * 4u) | ((uint32)r_u8(stream + 22u) << 24);
@@ -341,6 +382,10 @@ uint32 scene_packet_far_core(uint32 packet, sint32 relative_x, sint32 relative_y
                 w_u32(bucket, output & 0x00FFFFFFu);
                 result = (words << 24) | (previous & 0x00FFFFFFu);
                 w_u32(output, result);
+#if defined(AP_SWITCH)
+                if (collect)
+                    scene_record_projected_face(output,coordinate_stride,vertex_count,projective_depths,rtpt_ok,rtps_ok,false,RACE_PERSPECTIVE_DIRECT);
+#endif
                 output += (words + 1u) * 4u;
             }
             stream += stride;

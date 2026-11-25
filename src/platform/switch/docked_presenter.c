@@ -89,13 +89,15 @@ static struct {
     unsigned upscale;
     AppletOperationMode operation_mode;
     GLuint program;
-    GLuint vertex_array;
+    GLuint vertex_array, nearest_sampler, linear_sampler;
+    uint64_t context_generation;
     GLint max_texture_size;
     PresenterTexture frame, overlay;
     bool submitted_frame;
     DockedPresenterLog logger;
     void *log_user_data;
 } presenter;
+static uint64_t next_context_generation;
 
 static void log_message(const char *format, ...) __attribute__((format(printf, 1, 2)));
 static void log_message(const char *format, ...)
@@ -235,6 +237,17 @@ static bool create_draw_objects(void)
     glBindVertexArray(presenter.vertex_array);
     glGenTextures(1, &presenter.frame.name);
     glGenTextures(1, &presenter.overlay.name);
+    glGenSamplers(1, &presenter.nearest_sampler);
+    glGenSamplers(1, &presenter.linear_sampler);
+    const GLuint samplers[] = {presenter.nearest_sampler, presenter.linear_sampler};
+    for (unsigned i = 0; i < 2; ++i)
+    {
+        const GLint filter = i ? GL_LINEAR : GL_NEAREST;
+        glSamplerParameteri(samplers[i], GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glSamplerParameteri(samplers[i], GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glSamplerParameteri(samplers[i], GL_TEXTURE_MIN_FILTER, filter);
+        glSamplerParameteri(samplers[i], GL_TEXTURE_MAG_FILTER, filter);
+    }
     glDisable(GL_DITHER);
     glClearColor(0, 0, 0, 1);
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &presenter.max_texture_size);
@@ -242,7 +255,7 @@ static bool create_draw_objects(void)
     glGetIntegerv(GL_MAX_VIEWPORT_DIMS, max_viewport);
     GLenum error = glGetError();
     if (error != GL_NO_ERROR || !presenter.vertex_array || !presenter.frame.name || !presenter.overlay.name ||
-        presenter.max_texture_size <= 0 || max_viewport[0] < presenter.width ||
+        !presenter.nearest_sampler || !presenter.linear_sampler || presenter.max_texture_size <= 0 || max_viewport[0] < presenter.width ||
         max_viewport[1] < presenter.height)
     {
         log_message("GPU presenter: GL setup failed (GL 0x%x, max texture %d, max viewport %dx%d)",
@@ -410,6 +423,9 @@ bool docked_presenter_init(NWindow *window, int32_t width, int32_t height, unsig
         goto fail;
     const char *renderer = (const char *)glGetString(GL_RENDERER);
     log_message("GPU presenter: %s", renderer ? renderer : "unknown GLES renderer");
+    if (++next_context_generation == 0)
+        ++next_context_generation;
+    presenter.context_generation = next_context_generation;
     presenter.ready = true;
     return true;
 
@@ -424,10 +440,11 @@ static void upload_and_draw(PresenterTexture *texture, const uint32_t *pixels, G
                             GLint row_length, GLint filter, FramebufferViewport viewport)
 {
     glBindTexture(GL_TEXTURE_2D, texture->name);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+    glBindSampler(0, filter == GL_LINEAR ? presenter.linear_sampler : presenter.nearest_sampler);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+    glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, row_length);
     // GLES core RGBA upload plus shader BGR swizzle avoids a BGRA extension or a CPU repack.
     // Allocate the crop alone so bilinear sampling cannot bleed from outside it.
@@ -454,10 +471,16 @@ static void draw_fps_overlay(unsigned fps, EGLint drawable_height)
                     (FramebufferViewport){left, drawable_height - top - height, width, height});
 }
 
-DockedPresenterResult docked_presenter_present(const uint32_t *pixels, int32_t bitmap_width,
-                                               int32_t bitmap_height, FramebufferSource crop,
-                                               DockedPresenterFrameKind kind,
-                                               FramebufferFilter filter, const unsigned *fps)
+uint64_t docked_presenter_context_generation(void)
+{
+    return presenter.ready && eglGetCurrentContext() == presenter.context &&
+        eglGetCurrentDisplay() == presenter.display && eglGetCurrentSurface(EGL_DRAW) == presenter.surface
+        ? presenter.context_generation : 0;
+}
+
+static DockedPresenterResult present_frame(const uint32_t *pixels, const DockedPresenterBorrowedTexture *texture,
+    int32_t bitmap_width, int32_t bitmap_height, FramebufferSource crop, DockedPresenterFrameKind kind,
+    FramebufferFilter filter, const unsigned *fps)
 {
     if (!presenter.ready)
         return DOCKED_PRESENTER_UNAVAILABLE;
@@ -466,11 +489,13 @@ DockedPresenterResult docked_presenter_present(const uint32_t *pixels, int32_t b
         log_message("GPU presenter: operation mode changed; releasing the old EGL surface");
         return DOCKED_PRESENTER_MODE_CHANGED;
     }
+    if (!docked_presenter_context_generation())
+        return DOCKED_PRESENTER_UNAVAILABLE;
     if (!validate_drawable(false))
         goto unavailable;
 
     DockedPresenterFrameLayout layout;
-    if (!pixels || !docked_presenter_frame_layout(presenter.width, presenter.height, presenter.upscale, bitmap_width,
+    if ((!pixels && !texture) || !docked_presenter_frame_layout(presenter.width, presenter.height, presenter.upscale, bitmap_width,
                                                    bitmap_height, crop, kind, &layout) ||
         crop.width > presenter.max_texture_size || crop.height > presenter.max_texture_size ||
         (filter != FRAMEBUFFER_FILTER_NEAREST && filter != FRAMEBUFFER_FILTER_BILINEAR))
@@ -480,15 +505,51 @@ DockedPresenterResult docked_presenter_present(const uint32_t *pixels, int32_t b
         return DOCKED_PRESENTER_INVALID_FRAME;
     }
 
-    // Clear every back buffer to opaque black before drawing inside the active viewport.
-    // glClear is not limited by the previous glViewport (scissor is never enabled).
+    if (texture && (texture->context_generation != presenter.context_generation ||
+        texture->width != crop.width || texture->height != crop.height ||
+        !glIsTexture(texture->texture_name)))
+        return DOCKED_PRESENTER_INVALID_FRAME;
+
+    const GLint sampling = kind == DOCKED_PRESENTER_GAME && filter == FRAMEBUFFER_FILTER_BILINEAR
+        ? GL_LINEAR : GL_NEAREST;
+    if (texture)
+    {
+        // The producer may have left the scanout FBO current. Never sample a
+        // texture attached to the draw framebuffer. Restore the draw pipeline
+        // to presenter state, regardless of the producer's viewport/program.
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        glUseProgram(presenter.program);
+        glBindVertexArray(presenter.vertex_array);
+        glActiveTexture(GL_TEXTURE0);
+        glDisable(GL_SCISSOR_TEST);
+        glDisable(GL_RASTERIZER_DISCARD);
+        glDisable(GL_BLEND);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_STENCIL_TEST);
+        glDisable(GL_CULL_FACE);
+        glDisable(GL_DITHER);
+        glDisable(GL_SAMPLE_COVERAGE);
+        glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glClearColor(0, 0, 0, 1);
+    }
+    // Clear the entire drawable, not just the game viewport.
     glClear(GL_COLOR_BUFFER_BIT);
-    upload_and_draw(&presenter.frame, pixels + layout.source_offset_pixels, crop.width, crop.height,
-                    layout.unpack_row_length_pixels,
-                    kind == DOCKED_PRESENTER_GAME && filter == FRAMEBUFFER_FILTER_BILINEAR ? GL_LINEAR : GL_NEAREST,
-                    layout.gl_viewport);
+    if (texture)
+    {
+        const FramebufferViewport viewport = layout.gl_viewport;
+        glBindTexture(GL_TEXTURE_2D, texture->texture_name);
+        glBindSampler(0, sampling == GL_LINEAR ? presenter.linear_sampler : presenter.nearest_sampler);
+        glViewport(viewport.x, viewport.y, viewport.width, viewport.height);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+    else
+        upload_and_draw(&presenter.frame, pixels + layout.source_offset_pixels, crop.width, crop.height,
+                        layout.unpack_row_length_pixels, sampling, layout.gl_viewport);
     if (fps)
         draw_fps_overlay(*fps, presenter.height);
+    glBindSampler(0, 0);
     GLenum error = glGetError();
     if (error != GL_NO_ERROR)
     {
@@ -516,6 +577,20 @@ DockedPresenterResult docked_presenter_present(const uint32_t *pixels, int32_t b
 unavailable:
     presenter.ready = false;
     return DOCKED_PRESENTER_UNAVAILABLE;
+}
+
+DockedPresenterResult docked_presenter_present(const uint32_t *pixels, int32_t bitmap_width,
+    int32_t bitmap_height, FramebufferSource crop, DockedPresenterFrameKind kind,
+    FramebufferFilter filter, const unsigned *fps)
+{
+    return present_frame(pixels, NULL, bitmap_width, bitmap_height, crop, kind, filter, fps);
+}
+
+DockedPresenterResult docked_presenter_present_texture(const DockedPresenterBorrowedTexture *texture,
+    int32_t bitmap_width, int32_t bitmap_height, FramebufferSource crop,
+    FramebufferFilter filter, const unsigned *fps)
+{
+    return present_frame(NULL, texture, bitmap_width, bitmap_height, crop, DOCKED_PRESENTER_GAME, filter, fps);
 }
 
 DockedPresenterResult docked_presenter_splash(const uint32_t *pixels, int32_t width, int32_t height)

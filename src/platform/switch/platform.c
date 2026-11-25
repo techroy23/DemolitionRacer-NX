@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <setjmp.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -10,6 +11,7 @@
 #include "resume_switch.h"
 #include "asset_preload.h"
 #include "docked_presenter.h"
+#include "game_exit.h"
 
 #define XPORT_NO_PSYQ_CRITICAL_SECTION
 #include "psx_spu.h"
@@ -26,6 +28,9 @@
 static sint32 headless, quitting, exit_code;
 static bool game_running, video_initialized, shutting_down;
 static jmp_buf game_exit;
+static _Thread_local bool can_unwind_game;
+static unsigned submission_fps;
+static uint64 borrowed_texture_frames;
 static XportCleanup cleanup_handler;
 static int32_t display_width = HANDHELD_PRESENTER_WIDTH, display_height = HANDHELD_PRESENTER_HEIGHT;
 static Framebuffer switch_framebuffer;
@@ -34,6 +39,9 @@ static const char *asset_preload_phase;
 static unsigned asset_preload_hits;
 static uint64 present_attempts, presented_frames, failed_frames, nonblack_frames;
 static bool race_display_active;
+static bool live_native_race_gpu_requested, live_race_perspective_requested;
+void switch_live_race_gpu_shutdown(void);
+void switch_live_race_gpu_before_stock_present(void);
 static uint64 race_display_start, race_display_start_frames, race_display_start_failures;
 static uint64 race_blit_samples, race_blit_total_us, race_blit_peak_us;
 static uint32 race_start_audio_overruns;
@@ -292,6 +300,13 @@ static void start_diagnostics(void)
     if (settings)
         fclose(settings);
     diagnostic_threshold = game_settings.level;
+    FILE *live_gpu_marker = fopen(GAME_DIR "/experimental-live-native-single-player-gpu-race.enable", "rb");
+    const int live_gpu_marker_error = live_gpu_marker ? 0 : errno;
+    live_native_race_gpu_requested = live_gpu_marker != NULL;
+    if (live_gpu_marker) fclose(live_gpu_marker);
+    FILE *perspective_marker=fopen(GAME_DIR "/experimental-race-perspective.enable","rb");
+    live_race_perspective_requested=perspective_marker!=NULL;
+    if (perspective_marker) fclose(perspective_marker);
     if (diagnostic_threshold == DIAGNOSTICS_OFF)
         return;
 
@@ -341,6 +356,9 @@ static void start_diagnostics(void)
     switch_log(DIAGNOSTICS_INFO, "Graphics experiment: DISPLAY_FILTER=%s DISPLAY_WORKER=%s CAR_LOD=%s TRACK_DISTANCE=%s; scope=race",
                display_filter_name(game_settings.display_filter), game_settings.display_worker ? "true" : "false",
                game_settings.car_lod_extended ? "EXTENDED" : "STOCK", game_settings.track_distance_extended ? "EXTENDED" : "STOCK");
+    switch_log(DIAGNOSTICS_INFO, "Live race GPU entry fix: marker=%s errno=%d",
+               live_native_race_gpu_requested ? "found" : "not-opened", live_gpu_marker_error);
+    switch_log(DIAGNOSTICS_INFO,"Race perspective marker=%s",live_race_perspective_requested ? "found" : "not-opened");
 }
 
 void switch_record_collision_response(uint64 duration_microseconds)
@@ -843,6 +861,70 @@ sint32 xport_window_init(void)
     return video_initialized;
 }
 
+// Use one submission cadence counter regardless of the input representation.
+static void record_submission_fps(uint64 submitted_us)
+{
+    static uint64 window_start, frame_start_count;
+    if (!window_start)
+    {
+        window_start = submitted_us;
+        frame_start_count = presented_frames;
+    }
+    uint64 window_elapsed = submitted_us - window_start;
+    if (window_elapsed >= 1000000)
+    {
+        submission_fps = (unsigned)((1000000 * (presented_frames - frame_start_count) + window_elapsed / 2) / window_elapsed);
+        window_start = submitted_us;
+        frame_start_count = presented_frames;
+    }
+}
+
+bool switch_live_race_gpu_permitted(void)
+{
+    return live_native_race_gpu_requested && video_initialized && gpu_active && !headless && race_display_active &&
+           !game_settings.car_lod_extended && !game_settings.track_distance_extended;
+}
+
+bool switch_live_race_perspective_permitted(void)
+{
+    return live_race_perspective_requested && switch_live_race_gpu_permitted();
+}
+
+void switch_live_race_gpu_log(const char *message)
+{
+    switch_log(DIAGNOSTICS_INFO, "%s", message);
+}
+
+void switch_live_race_gpu_entry_log(bool eligible, uint32 racers, uint32 split_screen,
+                                    uint32 demo_mode, uint32 replay_mode)
+{
+    if (live_native_race_gpu_requested)
+        switch_log(DIAGNOSTICS_INFO, "Live race GPU: scope=%s racers=%u split-screen=%u demo=%u replay=%u platform=%s",
+                   eligible ? "eligible" : "ineligible", (unsigned)racers, (unsigned)split_screen,
+                   (unsigned)demo_mode, (unsigned)replay_mode, switch_live_race_gpu_permitted() ? "ready" : "not-ready");
+}
+
+DockedPresenterResult switch_present_race_texture(const DockedPresenterBorrowedTexture *texture,
+    int32_t bitmap_width, int32_t bitmap_height, FramebufferSource crop)
+{
+    ++present_attempts;
+    DockedPresenterResult result = DOCKED_PRESENTER_UNAVAILABLE;
+    if (gpu_active && video_initialized && !headless && race_display_active)
+        result = docked_presenter_present_texture(texture, bitmap_width, bitmap_height, crop,
+            game_settings.display_filter, game_settings.fps_overlay ? &submission_fps : NULL);
+    if (result == DOCKED_PRESENTER_SUBMITTED)
+    {
+        ++presented_frames;
+        ++borrowed_texture_frames;
+        record_submission_fps(xport_timer_get());
+        if (borrowed_texture_frames == 1)
+            switch_log(DIAGNOSTICS_INFO, "Race presenter: borrowed GPU texture; game RGB diagnostic unavailable");
+    }
+    else
+        ++failed_frames;
+    return result;
+}
+
 static bool rebuild_gpu_display_for_mode_change(void)
 {
     docked_presenter_close();
@@ -856,6 +938,7 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
                      sint32 source_x, sint32 source_y, sint32 source_width, sint32 source_height, const char *title)
 {
     extern sint32 dr_movie_display_active(void);
+    switch_live_race_gpu_before_stock_present();
     (void)title;
     if (headless)
         return 1;
@@ -865,10 +948,9 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
         ++failed_frames;
         return 0;
     }
-    static uint64 window_start, frame_start_count, max_submit_us, last_submit_us;
+    static uint64 max_submit_us, last_submit_us;
     static uint64 dequeue_total, scale_total, queue_total, previous_submission_time, longest_submission_gap;
     static unsigned profiled_submissions, gaps_over_25ms, gaps_over_34ms;
-    static unsigned submission_fps;
     uint64 submit_start_us = xport_timer_get();
     const FramebufferSource crop = {source_x, source_y, source_width, source_height};
     const bool movie = dr_movie_display_active() != 0;
@@ -1017,18 +1099,7 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
     last_submit_us = submitted_us - submit_start_us;
     if (last_submit_us > max_submit_us)
         max_submit_us = last_submit_us;
-    if (!window_start)
-    {
-        window_start = submitted_us;
-        frame_start_count = presented_frames;
-    }
-    uint64 window_elapsed = submitted_us - window_start;
-    if (window_elapsed >= 1000000)
-    {
-        submission_fps = (unsigned)((1000000 * (presented_frames - frame_start_count) + window_elapsed / 2) / window_elapsed);
-        window_start = submitted_us;
-        frame_start_count = presented_frames;
-    }
+    record_submission_fps(submitted_us);
     if (nonblack)
         ++nonblack_frames;
     switch_log(DIAGNOSTICS_TRACE,
@@ -1054,6 +1125,18 @@ sint32 xport_present(const uint32 *pixels, sint32 bitmap_width, sint32 bitmap_he
     previous_crop = crop;
     previous_nonblack = nonblack;
     return 1;
+}
+
+_Noreturn void switch_abort_game(const char *reason)
+{
+    // A jmp_buf belongs to the game thread. Do not return to an untrusted
+    // graphics operation even if a caller violates the game-thread contract.
+    if (!can_unwind_game)
+        abort();
+    switch_log(DIAGNOSTICS_FATAL, "%s", reason);
+    quitting = 1;
+    exit_code = 1;
+    longjmp(game_exit, 1);
 }
 
 sint32 xport_is_headless(void) { return headless; }
@@ -1436,6 +1519,7 @@ void xport_shutdown(void)
     cleanup_handler = NULL;
     if (cleanup)
         cleanup();
+    switch_live_race_gpu_shutdown();
     xport_audio_shutdown();
     switch_clear_asset_preload();
     if (video_initialized)
@@ -1536,6 +1620,7 @@ int main(void)
     xport_input_init();
     if (setjmp(game_exit) == 0)
     {
+        can_unwind_game = true;
         game_running = true;
         start_display_worker();
         pump_applet();
@@ -1546,15 +1631,17 @@ int main(void)
         switch_log(DIAGNOSTICS_INFO, "Entering reconstructed PS1 game code");
         xport_main();
     }
+    can_unwind_game = false;
     game_running = false;
 #ifdef DRACER_RESUME_TRACE
     resume_switch_stop(diagnostic_log);
 #endif
     switch_set_race_display_active(false);
     stop_display_worker();
-    switch_log(DIAGNOSTICS_INFO, "Video totals: requested=%llu submitted=%llu nonblack=%llu failed=%llu; audio buffers=%u overruns=%u",
+    switch_log(DIAGNOSTICS_INFO, "Video totals: requested=%llu submitted=%llu nonblack=%llu failed=%llu; borrowed-texture=%llu (nonblack not measured); audio buffers=%u overruns=%u",
                (unsigned long long)present_attempts, (unsigned long long)presented_frames,
                (unsigned long long)nonblack_frames, (unsigned long long)failed_frames,
+               (unsigned long long)borrowed_texture_frames,
                (unsigned)g_xport_audio_submitted_buffers, (unsigned)g_xport_audio_callback_overruns);
     xport_shutdown();
     if (exit_locked)

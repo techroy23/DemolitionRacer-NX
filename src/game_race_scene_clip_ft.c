@@ -1,5 +1,8 @@
 #include "draft_signatures.h"
 #include "game_race_scene_packets.h"
+#if defined(AP_SWITCH)
+#include "game_race_scene_perspective.h"
+#endif
 
 static void ft_vertex_load(uint32 index, const SceneSubdivisionVertex *vertex)
 {
@@ -25,7 +28,14 @@ uint32 scene_80051BC0(const SceneSubdivisionHeader *header, SceneSubdivisionVert
     ft_vertex_load(2u, vertices[2]);
     ft_vertex_load(0u, vertices[0]);
     packet = r_u32(0x80065570u);
+#if defined(AP_SWITCH)
+    uint32 projective_depths[4];
+    const bool collect = switch_race_perspective_collecting();
+#endif
     xport_gte_execute(0x280030u);
+#if defined(AP_SWITCH)
+    const bool rtpt_ok = collect && scene_read_projective_depths(projective_depths, 17u, 3u);
+#endif
     w_u16(packet + 20u, (uint16)vertices[1]->uv);
     w_u16(packet + 14u, header->clut);
     w_u32(packet + 4u, header->color | 0x24000000u);
@@ -39,7 +49,13 @@ uint32 scene_80051BC0(const SceneSubdivisionHeader *header, SceneSubdivisionVert
     depth = xport_gte_read_data(7u);
     if ((sint32)depth <= 0)
         return header->ordering;
-    return ft_link(packet, header->ordering, depth, 7u, 32u);
+    const uint32 linked = ft_link(packet, header->ordering, depth, 7u, 32u);
+#if defined(AP_SWITCH)
+    if (collect)
+        scene_record_projected_face(packet, 8u, 3u, projective_depths,
+            rtpt_ok, true, true, RACE_PERSPECTIVE_NEAR_LEAF);
+#endif
+    return linked;
 }
 
 uint32 scene_80051C90(const SceneSubdivisionHeader *header, SceneSubdivisionVertex *const *vertices)
@@ -49,7 +65,14 @@ uint32 scene_80051C90(const SceneSubdivisionHeader *header, SceneSubdivisionVert
     ft_vertex_load(2u, vertices[2]);
     ft_vertex_load(0u, vertices[0]);
     packet = r_u32(0x80065570u);
+#if defined(AP_SWITCH)
+    uint32 projective_depths[4];
+    const bool collect = switch_race_perspective_collecting();
+#endif
     xport_gte_execute(0x280030u);
+#if defined(AP_SWITCH)
+    const bool rtpt_ok = collect && scene_read_projective_depths(projective_depths, 17u, 3u);
+#endif
     w_u16(packet + 20u, (uint16)vertices[1]->uv);
     w_u16(packet + 14u, header->clut);
     w_u32(packet + 4u, header->color | 0x2C000000u);
@@ -58,6 +81,9 @@ uint32 scene_80051C90(const SceneSubdivisionHeader *header, SceneSubdivisionVert
     w_u32(packet + 24u, xport_gte_read_data(14u));
     ft_vertex_load(0u, vertices[3]);
     xport_gte_execute(0x180001u);
+#if defined(AP_SWITCH)
+    const bool rtps_ok = collect && scene_read_projective_depths(projective_depths + 3, 19u, 1u);
+#endif
     w_u16(packet + 12u, (uint16)vertices[0]->uv);
     w_u16(packet + 22u, header->tpage);
     w_u16(packet + 28u, (uint16)vertices[2]->uv);
@@ -67,7 +93,13 @@ uint32 scene_80051C90(const SceneSubdivisionHeader *header, SceneSubdivisionVert
     if ((sint32)depth <= 0)
         return header->ordering;
     w_u32(packet + 32u, xport_gte_read_data(14u));
-    return ft_link(packet, header->ordering, depth, 9u, 40u);
+    const uint32 linked = ft_link(packet, header->ordering, depth, 9u, 40u);
+#if defined(AP_SWITCH)
+    if (collect)
+        scene_record_projected_face(packet, 8u, 4u, projective_depths,
+            rtpt_ok, rtps_ok, true, RACE_PERSPECTIVE_NEAR_LEAF);
+#endif
+    return linked;
 }
 
 uint32 scene_80051F60(SceneSubdivisionVertex *output, const SceneSubdivisionVertex *left, const SceneSubdivisionVertex *right)

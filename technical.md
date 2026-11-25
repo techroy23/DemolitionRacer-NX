@@ -9,7 +9,7 @@
 | `switch/` | Switch build rules and default configuration; compiled artifacts go in `switch/build/`. |
 | `tools/`, `tests/` | Disc extraction, artwork preparation, packaging, and host tests. |
 
-The Switch build compiles the game to AArch64 and links the needed compatibility services. It does not execute the retail MIPS instructions or use a retail BIOS. Some files extracted from the disc, including PS1 executables, are read as data. The Switch backend keeps the original 4:3 race view. It prefers EGL/GLES presentation in full-memory handheld and docked launches and falls back to libnx when needed. GPU scaling does not change the game's race cadence or move its triangle rasterizer to the GPU.
+The Switch build compiles the game to AArch64 and links the needed compatibility services. It does not execute the retail MIPS instructions or use a retail BIOS. Some files extracted from the disc, including PS1 executables, are read as data. The Switch backend keeps the original 4:3 race view. It prefers EGL/GLES presentation in full-memory handheld and docked launches and falls back to libnx when needed. GPU scaling itself does not change race cadence or move triangle rasterization to the GPU. A separate [experimental solo race renderer](switch/graphics.md#experimental-solo-race-renderer) can do GPU rasterization when explicitly enabled.
 
 ## Build the Switch app
 
@@ -20,7 +20,7 @@ git submodule update --init -- src/xport
 make -C switch
 ```
 
-The output is `switch/build/DemolitionRacer.nro`. Building does not require a retail disc. The two `game_*.png` files provide the port's launcher icon and startup splash; they are separate from the original game assets that the app reads from your SD card. The splash lasts about five seconds before the game starts, and scales to fit without stretching or cropping.
+The output is `switch/build/DemolitionRacer.nro`, with a Homebrew Menu icon and metadata and no RomFS. The build generates the GPU hooks from the pinned xport source without modifying the submodule. Building does not require a retail disc. The two `game_*.png` files provide the port's launcher icon and startup splash; they are separate from the original game assets that the app reads from your SD card. The splash lasts about five seconds before the game starts, and scales to fit without stretching or cropping.
 
 ## Disc extraction and packaging
 
@@ -60,3 +60,13 @@ For a dock change, check that `Video: GLES` reports the new output size. For HOM
 ## Verification
 
 Run `python -m unittest discover -s tests -v` from the project root for host tests. For runtime changes, start with `make -C switch clean` and rebuild before testing on a real Switch. Report a cross-build and a hardware test separately. The [porting plan](PLAN.MD) describes the original-game comparison and handheld and docked checks.
+
+For the Windows renderer regression fixtures, use Git Bash with UCRT64 GCC on `PATH`, Python 3.11+ (`PYTHON` can select an interpreter), and local ANGLE `libEGL.dll` and `libGLESv2.dll`. Set `DEVKITPRO` to the native SDK path (for example, `C:/devkitPro`). Run from the project root:
+
+```sh
+bash run_native_ot_checks.sh
+bash run_presenter_checks.sh "$ANGLE_DIR"
+bash run_live_native_race_gpu_hooks.sh "$ANGLE_DIR"
+```
+
+Use a native Windows path for `ANGLE_DIR`. These commands run synthetic fixtures without retail data. The last script also accepts an optional local `DRRCAP1` replay path as its second argument; keep any private capture outside source control and release assets. An untagged replay checks stock VRAM isolation, not where perspective correction is visible.

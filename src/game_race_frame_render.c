@@ -2,6 +2,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef __SWITCH__
+#include "platform/switch/game_exit.h"
+#endif
 void sub_80042B3C(uint32 buffer);
 extern uint32 draft_agent3_missing_8003D9AC(uint32 mode);
 #define R32(a) (*(uint32 *)psx_addr((a), 4u))
@@ -206,7 +209,13 @@ void game_800B3810(void)
         R32(0x800C7450u) = 0u;
         return;
     }
-    StoreImage(&rectangle, (uint32 *)psx_addr(0x800C7488u, 512u));
+    const sint32 store_result = StoreImage(&rectangle, (uint32 *)psx_addr(0x800C7488u, 512u));
+#ifdef __SWITCH__
+    if (store_result < 0)
+        switch_abort_game("Race mask StoreImage failed before destination inspection");
+#else
+    (void)store_result;
+#endif
     draft_agent3_missing_8003D9AC(0u);
     for (row = 0u; row < 16u; row += 2u)
         for (column = 0u; column < 16u; column += 2u)

@@ -1,0 +1,174 @@
+#version 310 es
+precision highp int;
+layout(local_size_x=32) in;
+layout(std430,binding=0) coherent buffer Vram { uint vram[]; };
+layout(std430,binding=1) readonly buffer Command { uint commandWords[]; };
+layout(std430,binding=2) readonly buffer InputWords { uint words[]; };
+#ifdef PRESENT_PERSPECTIVE
+layout(std430,binding=3) buffer DisplayOverrides { uint displayOverrides[]; };
+precision highp float;
+#endif
+uniform highp int batchConfiguration; // x: ordered tile mode
+uint commandOffset;
+#define JOB(field) commandWords[commandOffset+(field)]
+shared uint rowCache[1024];
+const uint OP=0u,LX=1u,LY=2u,HX=3u,HY=4u,FLAGS=5u,TP=6u,CL=7u,WIN=8u,SRC=9u,X0=10u,Y0=11u,COLOR=12u,WIDTH=13u;
+uint wordAt(uint x,uint y){uint w=vram[y*512u+x/2u]; return (w>>((x&1u)*16u))&65535u;}
+uint sampleVram(uint u,uint v){
+    uint t=JOB(TP), c=JOB(CL), win=JOB(WIN), mode=(t>>7)&3u;
+    uint mx=(win&31u)*8u,my=((win>>5)&31u)*8u;
+    uint x=((u&~mx)|((win>>7)&mx))&255u;
+    uint y=((v&~my)|((win>>12)&my))&255u;
+    uint tx=(t&15u)*64u, ty=(t&16u)*16u;
+    if(mode>=2u)return wordAt((tx+x)&1023u,ty+y);
+    uint sh=2u-mode,bits=4u<<mode;
+    uint w=wordAt((tx+(x>>sh))&1023u,ty+y);
+    uint index=(w>>((x&((1u<<sh)-1u))*bits))&((1u<<bits)-1u);
+    return wordAt(((c&63u)*16u+index)&1023u,(c>>6)&511u);
+}
+int scanEdge(uint e,uint y){
+    uint hi,lo;
+    uint dy=y-JOB(e+1u);
+    umulExtended(JOB(e+2u),dy,hi,lo);
+    return int(JOB(e)+JOB(e+3u)*dy+hi+uint(lo>=2048u));
+}
+uint interpolant(uint i,uint x,uint y){uint a=32u+i*3u;return (JOB(a)+JOB(a+1u)*x+JOB(a+2u)*y)>>24;}
+const int dither[16]=int[16](-4,0,-3,1,2,-2,3,-1,-3,1,-4,0,3,-1,2,-2);
+#ifdef PRESENT_PERSPECTIVE
+ivec2 perspectivePosition(uint vertex){
+    uint packedPosition=JOB(47u+vertex*3u);
+    return ivec2(int(packedPosition<<16u)>>16,int(packedPosition)>>16);
+}
+int crossProduct(ivec2 first,ivec2 second){return first.x*second.y-first.y*second.x;}
+uint perspectiveTexel(uint x,uint y){
+    ivec2 origin=perspectivePosition(0u), first=perspectivePosition(1u)-origin;
+    ivec2 second=perspectivePosition(2u)-origin, point=ivec2(int(x),int(y))-origin;
+    int area=crossProduct(first,second), firstWeight=crossProduct(point,second);
+    int secondWeight=crossProduct(first,point);
+    vec3 weights=vec3(area-firstWeight-secondWeight,firstWeight,secondWeight)/float(area);
+    vec3 reciprocal=weights/vec3(JOB(49u),JOB(52u),JOB(55u));
+    float sum=reciprocal.x+reciprocal.y+reciprocal.z;
+    if(sum<=0.0)return 0u;
+    vec2 uvOverDepth=vec2(0.0);
+    for(uint vertex=0u;vertex<3u;++vertex){
+        uint uv=JOB(48u+vertex*3u);
+        uvOverDepth+=vec2(uv&255u,(uv>>8u)&255u)*reciprocal[vertex];
+    }
+    uvec2 uv=uvec2(clamp(floor(uvOverDepth/sum+0.5),vec2(0.0),vec2(255.0)));
+    return sampleVram(uv.x,uv.y);
+}
+#endif
+// Override only committed pixels, including same-valued stock writes.
+uint stockWrite(uint x,uint y,uint value){
+#ifdef PRESENT_PERSPECTIVE
+    displayOverrides[y*1024u+x]=0u;
+#endif
+    return value;
+}
+uint pixel(uint x,uint y,uint back,int left,int right){
+    if(int(x)<left || int(x)>=right)return back;
+    uint op=JOB(OP), f=JOB(FLAGS), i=x-JOB(LX);
+    if(op==3u)return stockWrite(x,y,JOB(COLOR));
+    if(op==5u)return stockWrite(x,y,wordAt(JOB(SRC)+i,JOB(COLOR)+y-JOB(LY)));
+    if(op==6u)return stockWrite(x,y,rowCache[i]);
+    if((f&32u)!=0u && (back&32768u)!=0u)return back;
+    uint setMask=(f&16u)!=0u?32768u:0u;
+    if(op==4u){
+        uint k=((y-JOB(Y0))&511u)*JOB(WIDTH)+((x-JOB(X0))&1023u);
+        return stockWrite(x,y,setMask|((words[JOB(SRC)+k/2u]>>((k&1u)*16u))&65535u));
+    }
+    uint tex=0u;
+    bool textured=(f&1u)!=0u;
+    if(textured){
+        uint u=op==2u?interpolant(0u,x,y):((JOB(SRC)&255u)+x-JOB(X0));
+        uint v=op==2u?interpolant(1u,x,y):((JOB(SRC)>>8)+y-JOB(Y0));
+        tex=sampleVram(u,v);
+        if(tex==0u)return back;
+    }
+    uint stp=tex&32768u;
+    int shade=(f&8u)==0u?0:dither[(y&3u)*4u+(x&3u)];
+    uint result=setMask|stp, mode=(JOB(TP)>>5)&3u;
+#ifdef PRESENT_PERSPECTIVE
+    // Keep discard, destination masks, blending and the authoritative texel affine.
+    // Only opaque eligible surfaces can write a color override; an alternate
+    // transparent sample falls back to the original opaque pixel.
+    uint correctedTexel=op==2u && textured && (f&4u)==0u && JOB(49u)!=0u
+        ? perspectiveTexel(x,y):0u;
+    uint correctedColor=0u;
+#endif
+    for(uint c=0u;c<3u;++c){
+        int a=int(op==2u?interpolant(c+2u,x,y):((JOB(COLOR)>>(c*8u))&255u));
+#ifdef PRESENT_PERSPECTIVE
+        if(correctedTexel!=0u){
+            int channel=int((correctedTexel>>(c*5u))&31u);
+            int corrected=(f&2u)!=0u?channel:clamp((((channel*a)>>4)+shade)>>3,0,31);
+            correctedColor|=uint(corrected)<<(c*5u);
+        }
+#endif
+        int t=int((tex>>(c*5u))&31u);
+        // Native raw texels bypass modulation and dithering, even on Gouraud polygons.
+        a=textured && (f&2u)!=0u?t:clamp(((textured?(t*a)>>4:a)+shade)>>3,0,31);
+        if((f&4u)!=0u && (!textured||stp!=0u)){
+            int b=int((back>>(c*5u))&31u);
+            a=mode==0u?(a+b)>>1:mode==1u?a+b:mode==2u?b-a:b+(a>>2);
+        }
+        result|=uint(clamp(a,0,31))<<(c*5u);
+    }
+#ifdef PRESENT_PERSPECTIVE
+    displayOverrides[y*1024u+x]=correctedTexel!=0u ? correctedColor|65536u : 0u;
+#endif
+    return result;
+}
+uint rasterizedWord(uint x,uint y,int l,int r,uint old){
+    uint a=pixel(x,y,old&65535u,l,r),b=pixel(x+1u,y,old>>16,l,r);
+    return a|(b<<16);
+}
+void pairAt(uint x,uint y,int l,int r){
+    if(int(x)>=r || int(x+1u)<l)return;
+    uint idx=y*512u+x/2u;
+    vram[idx]=rasterizedWord(x,y,l,r,vram[idx]);
+}
+void clipTriangleRow(uint y,inout int l,inout int r){
+    if(JOB(OP)==2u){
+        int a=scanEdge(16u,y),b=scanEdge(int(y)<int(JOB(25u))?21u:26u,y);
+        l=max(l,min(a,b)); r=min(r,max(a,b));
+    }
+}
+void runOrderedTile(){
+    // 16 packed words by 2 rows. Each lane is the sole owner of its word.
+    uint entry=2u*gl_WorkGroupID.x;
+    uint tile=words[entry], mask=words[entry+1u], lane=gl_LocalInvocationID.x;
+    uint wordX=(tile%32u)*16u+lane%16u, y=(tile/32u)*2u+lane/16u;
+    uint x=2u*wordX, index=y*512u+wordX;
+    uint value=0u;
+    bool touched=false;
+    while(mask!=0u){
+        commandOffset=uint(findLSB(mask))*64u;
+        mask&=mask-1u;
+        int l=int(JOB(LX)), r=int(JOB(HX));
+        if(y<JOB(LY) || y>=JOB(HY) || int(x)>=r || int(x+1u)<l)continue;
+        clipTriangleRow(y,l,r);
+        if(l>=r || int(x)>=r || int(x+1u)<l)continue;
+        if(!touched)value=vram[index];
+        value=rasterizedWord(x,y,l,r,value);
+        touched=true;
+    }
+    if(touched)vram[index]=value;
+}
+void main(){
+    if(batchConfiguration!=0){runOrderedTile();return;}
+    commandOffset=0u;
+    uint ix=gl_GlobalInvocationID.x, y=JOB(LY)+gl_GlobalInvocationID.y;
+    int l=int(JOB(LX)),r=int(JOB(HX));
+    uint base=JOB(LX)&~1u;
+    if(JOB(OP)==6u){
+        for(uint k=ix;k<JOB(WIDTH);k+=32u)rowCache[k]=wordAt(JOB(SRC)+k,JOB(COLOR));
+        memoryBarrierShared();
+        barrier();
+        for(uint x=base+ix*2u;int(x)<r;x+=64u)pairAt(x,y,l,r);
+        return;
+    }
+    if(y>=JOB(HY) || base+ix*2u>=JOB(HX))return;
+    clipTriangleRow(y,l,r);
+    if(l<r)pairAt(base+ix*2u,y,l,r);
+}

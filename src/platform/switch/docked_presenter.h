@@ -67,6 +67,34 @@ DockedPresenterResult docked_presenter_present(const uint32_t *pixels, int32_t b
                                                DockedPresenterFrameKind kind,
                                                FramebufferFilter filter, const unsigned *fps);
 
+// Borrow a complete crop-sized, normalized GL_TEXTURE_2D (level 0 RGBA8,
+// stock BGR channel order and top game row at texture row 0). Do not pass the
+// full VRAM texture. Caller owns the texture and keeps it live through the call.
+typedef struct {
+    uint32_t texture_name;
+    uint64_t context_generation;
+    int32_t width, height;
+} DockedPresenterBorrowedTexture;
+
+// Zero unless the presenter's context and drawable are current on this thread.
+// Capture when opening the GPU owner, not when submitting a possibly stale name.
+uint64_t docked_presenter_context_generation(void);
+
+// crop is in logical bitmap coordinates, just as for CPU presentation. The
+// texture already contains exactly that crop; sampling never reapplies x/y.
+// This is a terminal draw+swap: it sets presenter GL state, not a state guard.
+// No game image upload/readback. A requested FPS overlay uploads only glyphs.
+// No result destroys/rebuilds EGL or retries on CPU. On mode change, leave GPU
+// ownership before using the stock rebuild; on uncertainty, stop instead.
+DockedPresenterResult docked_presenter_present_texture(const DockedPresenterBorrowedTexture *texture,
+    int32_t bitmap_width, int32_t bitmap_height, FramebufferSource crop,
+    FramebufferFilter filter, const unsigned *fps);
+
+// Game-thread scanout entry. Uses the normal race filter and FPS settings;
+// propagates every failure to the owner without CPU fallback or context close.
+DockedPresenterResult switch_present_race_texture(const DockedPresenterBorrowedTexture *texture,
+    int32_t bitmap_width, int32_t bitmap_height, FramebufferSource crop);
+
 // Fits a whole splash using its own aspect ratio; the caller owns splash timing.
 DockedPresenterResult docked_presenter_splash(const uint32_t *pixels, int32_t width, int32_t height);
 

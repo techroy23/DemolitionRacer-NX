@@ -1,6 +1,9 @@
 #include "draft_signatures.h"
 #include <stdio.h>
 #include <stdlib.h>
+#if defined(AP_SWITCH)
+#include "race_perspective.h"
+#endif
 
 #define R32(a) (*(uint32 *)psx_addr((a), 4u))
 #define R16(a) (*(uint16 *)psx_addr((a), 2u))
@@ -27,6 +30,9 @@ uint32 sub_80042754(void)
     R32(0x80065578u) = 0u;
     R32(0x80065574u) = size;
     R32(0x80065570u) = result;
+#if defined(AP_SWITCH)
+    switch_race_perspective_begin_arena(result,size);
+#endif
     return result;
 }
 

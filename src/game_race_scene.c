@@ -13,6 +13,7 @@ void game_800AB0D8(uint32 object);
 void game_800AE264(uint32 object);
 
 #if defined(AP_SWITCH)
+#include "race_perspective.h"
 extern sint32 switch_extra_track_section(void);
 extern void switch_record_track_stream(uint32 requested, uint32 occupied, uint32 loaded, uint32 misses, uint64 duration_us);
 extern void switch_record_track_extension(uint32 submitted_objects, uint32 packet_bytes);
@@ -212,6 +213,9 @@ void game_800B9374(uint32 port)
     sub_8003B898();
     for (axis = 0; axis < 5; ++axis)
         xport_gte_write_control(axis, r_u32(0x80081BA4u + axis * 4u));
+#if defined(AP_SWITCH)
+    switch_race_perspective_track_scope(port==0u);
+#endif
     for (i = 0; i < r_u32(0x800C7D60u) && (sint32)r_u32(0x800C7D60u) > 0; ++i)
     {
         uint32 slot = 0x800C7DB0u + port * 12u + i * 24u, buffer, count, j;
@@ -227,6 +231,12 @@ void game_800B9374(uint32 port)
             sub_8004171C(buffer + r_u32(buffer + 724u + j * 4u), 16384);
     }
 #if defined(AP_SWITCH)
+    if (switch_race_perspective_collecting()) {
+        const uint32 ordering_table=r_u32(r_u32(0x80065118u)+112u);
+        const uint32 ordering_entries=r_u32(0x800654f0u);
+        // Same root calculation as the main race submission in sub_80039A10.
+        switch_race_perspective_seal(ordering_table+ordering_entries*4u-4u);
+    }
     if (forward)
         track_draw_far(forward);
     else if (port == 0u && switch_extra_track_section())

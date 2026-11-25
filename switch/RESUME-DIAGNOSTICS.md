@@ -1,6 +1,6 @@
 # HOME / sleep diagnostics
 
-The production build uses the program-active clock by default. In the devkitPro SDK shell (tested with libnx 4.12.0):
+The production build still uses the program-active clock by default in v0.2.5. For a stock resume comparison, leave both [experimental graphics markers](graphics.md#experimental-solo-race-renderer) absent. Test resume with the experimental renderer in a separate run. In the devkitPro SDK shell (tested with libnx 4.12.0):
 
 ```sh
 make -C switch RESUME_DIAG=trace

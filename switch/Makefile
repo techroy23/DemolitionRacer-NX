@@ -34,7 +34,7 @@ else
 $(error RESUME_DIAG must be off, trace, or clock)
 endif
 NAME := DemolitionRacer
-VERSION := 0.2.4
+VERSION := 0.2.5
 PYTHON ?= python
 BINARY := $(BUILD)/$(NAME)
 BUILD_MAKEFILE := $(firstword $(MAKEFILE_LIST))
@@ -70,7 +70,7 @@ RUNTIME_SOURCES := psx.c psx_gpu.c psx_font.c psx_spu.c psx_seq.c psx_xa.c \
  psx_mdec.c psx_press.c psx_vlc.c psx_stream.c xport_fmv.c xport_trace.c
 GAME_OBJS := $(GAME_SOURCES:%.c=$(BUILD)/game/%.o)
 RUNTIME_OBJS := $(RUNTIME_SOURCES:%.c=$(BUILD)/xport/%.o)
-OBJS := $(GAME_OBJS) $(RUNTIME_OBJS) $(BUILD)/platform.o $(BUILD)/diagnostics.o $(BUILD)/framebuffer_blit.o $(BUILD)/asset_preload.o $(BUILD)/docked_presenter.o $(BUILD)/splash.o
+OBJS := $(GAME_OBJS) $(RUNTIME_OBJS) $(BUILD)/platform.o $(BUILD)/diagnostics.o $(BUILD)/framebuffer_blit.o $(BUILD)/asset_preload.o $(BUILD)/docked_presenter.o $(BUILD)/race_gpu_mesa.o $(BUILD)/race_gpu_store.o $(BUILD)/race_gpu_lowerer.o $(BUILD)/splash.o
 
 ifneq ($(RESUME_DIAG),off)
 OBJS += $(BUILD)/resume_switch.o
@@ -84,7 +84,7 @@ ARCH := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 DEFINES := -D__SWITCH__ -DAP_SWITCH -DXPORT_NATIVE -DFIELD_RATE=60 \
  -DWND_WIDTH=960 -DWND_HEIGHT=720 -DWND_TITLE='"Demolition Racer"' -DSHORT_NAME='"DR"' \
  -DDRACER_VERSION='"$(VERSION)"' -DNDEBUG
-INCLUDES := -I"$(GAME)" -I"$(RUNTIME)" -isystem "$(LIBNX)/include" -isystem "$(PORTLIBS)/include"
+INCLUDES := -I"$(BUILD)" -I"../replay" -I"$(SWITCH_PLATFORM)" -I"$(GAME)" -I"$(RUNTIME)" -isystem "$(LIBNX)/include" -isystem "$(PORTLIBS)/include"
 CFLAGS ?= -O2 -g -pipe
 # The PsyQ-compatible integer trig names overlap GCC's complex math builtins.
 COMPAT := -fms-extensions -funsigned-char -fno-strict-aliasing -fwrapv \
@@ -111,6 +111,24 @@ $(BUILD)/xport/psx.c: $(RUNTIME)/psx.c ../tools/instrument_resume_psx.py $(BUILD
 $(BUILD)/xport/psx.o: $(BUILD)/xport/psx.c
 	$(COMPILE.c) "$<" -o "$@"
 endif
+
+$(BUILD)/xport/psx_gpu.c: $(RUNTIME)/psx_gpu.c ../tools/instrument_live_native_race_gpu.py $(BUILD_MAKEFILE)
+	@mkdir -p "$(@D)"
+	$(PYTHON) ../tools/instrument_live_native_race_gpu.py "$<" "$@"
+
+$(BUILD)/xport/psx_gpu.o: $(BUILD)/xport/psx_gpu.c $(SWITCH_PLATFORM)/live_native_race_gpu.inc
+	$(COMPILE.c) "$<" -o "$@"
+
+$(BUILD)/race_gpu_lowerer.o: ../replay/replay.c $(BUILD_MAKEFILE)
+	@mkdir -p "$(@D)"
+	$(COMPILE.c) "$<" -o "$@"
+
+$(BUILD)/race_gpu_mesa.o: $(SWITCH_PLATFORM)/race_gpu_mesa.c $(BUILD)/live_raster.inc $(BUILD)/live_scanout.inc
+	$(COMPILE.c) "$<" -o "$@"
+
+$(BUILD)/live_raster.inc $(BUILD)/live_scanout.inc &: ../replay/raster.comp $(SWITCH_PLATFORM)/race_gpu_scanout.frag ../replay/store_fbo_readback.inc ../tools/embed_race_gpu_shaders.py
+	@mkdir -p "$(@D)"
+	cd .. && $(PYTHON) tools/embed_race_gpu_shaders.py "switch/$(BUILD)"
 
 $(BUILD)/xport/%.o: $(RUNTIME)/%.c $(BUILD_MAKEFILE)
 	@mkdir -p "$(@D)"

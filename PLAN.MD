@@ -74,6 +74,11 @@ Evidence from `DemolitionRacer_2026-11-22_19-15-56.log`: the last normal video s
 - In the separate hot-dock OLED run (`DemolitionRacer_2026-11-22_20-53-43.log`), GLES switched from 1280×720 to 1920×1080 during a race at `UPSCALE: x4`. After the transition, frames 18,120 through 26,520 averaged 59.4 submissions/sec. The transition caused a brief hitch and 39 additional audio overruns, but the game recovered without switching to software. The session submitted 28,963 frames, with zero failures and a clean exit. These counts do not measure unique game frames or scanout.
 - This run did not cover hot undocking. Repeat dock/undock and HOME/sleep in each mode, including menus and loading. Automatic three-core fallback scaling and GPU race geometry remain separate work.
 
+## v0.2.5 release evidence
+
+- The owner reported that the close-up texture skew was gone in the tested OLED run with both experimental markers enabled. The near test NRO logged 6,263 borrowed GPU textures out of 6,265 race submissions, with zero failed video submissions. These are submission counts, not measured refresh, unique frames, or corrected pixels.
+- The release rebuild uses the same rendering sources with normal launcher metadata and artwork. That OLED run did not exercise the exact release NRO, other circuits, or lifecycle transitions with the experimental renderer. Stock rendering remains the fidelity reference.
+
 ## Sources
 
 [1] https://github.com/m35/jpsxdec

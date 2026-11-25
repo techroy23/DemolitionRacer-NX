@@ -7,6 +7,7 @@
 #if defined(AP_SWITCH)
 #include <stdbool.h>
 void switch_set_race_display_active(bool active);
+void switch_live_race_gpu_scope(bool enabled);
 #endif
 
 #define R32(a) (*(uint32 *)psx_addr((a), 4u))
@@ -531,6 +532,15 @@ uint32 sub_80013A9C(void)
     R32(0x800651A4u) = value;
 #if defined(AP_SWITCH)
     if (!result) switch_set_race_display_active(true);
+    /* The racer count includes AI. Use the stock split-screen flag instead. */
+    extern void switch_live_race_gpu_entry_log(bool eligible, uint32 racers, uint32 split_screen,
+                                               uint32 demo_mode, uint32 replay_mode);
+    const uint32 split_screen = R32(0x800593A8u);
+    const uint32 demo_mode = R32(0x80064B5Cu);
+    const uint32 replay_mode = R32(0x80065110u);
+    const bool live_gpu_eligible = !result && !split_screen && !demo_mode && replay_mode != 1u;
+    switch_live_race_gpu_entry_log(live_gpu_eligible, R32(0x80065254u), split_screen, demo_mode, replay_mode);
+    switch_live_race_gpu_scope(live_gpu_eligible);
 #endif
     while (!result)
     {
@@ -709,6 +719,7 @@ uint32 sub_80013A9C(void)
         result = R32(0x80064A58u);
     }
 #if defined(AP_SWITCH)
+    switch_live_race_gpu_scope(false);
     switch_set_race_display_active(false);
 #endif
     race_call0(0x8001CD48u);

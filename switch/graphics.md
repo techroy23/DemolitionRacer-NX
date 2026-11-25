@@ -1,8 +1,16 @@
 # Switch video output
 
-## Current path (v0.2.4)
+## Default path (v0.2.5)
 
 The port prefers EGL/GLES for presentation outside applet mode. It uploads the finished CPU frame and preserves the centered 4:3 race viewport. At `x4`, handheld uses 1280×720 output with a 960×720 game viewport; docked uses 1920×1080 output with a 1280×960 game viewport. On an operation-mode change, it closes the old EGL producer before trying to rebuild for the new output. Applet mode and recoverable GPU failures use the libnx framebuffer. The original software rasterizer still renders the scene.
+
+## Experimental solo race renderer
+
+Stock CPU rasterization and affine texture mapping are unchanged by default. To try GPU rasterization in eligible single-player races, create an empty file named `experimental-live-native-single-player-gpu-race.enable` beside the NRO. To also try perspective correction, create `experimental-race-perspective.enable` there too. Relaunch after adding or removing either file. Keep `CAR_LOD` and `TRACK_DISTANCE` at `STOCK`; the GPU path also requires an active GLES presenter and excludes split-screen, demos, and replay mode. Remove both markers and relaunch to return to the default path.
+
+Perspective correction uses projection depth for eligible textured track triangles and quads, including near subdivision leaves and unsplit near parents. Invalid or saturated projections remain affine. Corrected texels affect only the displayed image: texture feedback, game-visible VRAM reads, and handoff to the stock renderer retain stock affine values. This does not change physics, the camera, or draw distance.
+
+For a comparison, keep the GPU rasterizer marker present and toggle only the perspective marker between runs on the same route and camera. Use `LOG: INFO` or `DEBUG`. Look for the marker, eligibility, and `borrowed-texture` counts in the dated log. Submissions do not measure scanout or corrected pixels. See the [OLED evidence](../PLAN.MD#v025-release-evidence) for what was tested.
 
 ## Original framebuffer path
 

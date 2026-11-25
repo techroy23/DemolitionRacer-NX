@@ -9,6 +9,7 @@ This is an unofficial native homebrew port of the US PlayStation release of *Dem
 
 ## Version history
 
+- Version `0.2.5` adds an opt-in GPU rasterizer for eligible solo races and optional perspective correction for eligible track surfaces, including near subdivided geometry. Stock affine rendering remains the default. See the [OLED test scope](PLAN.MD#v025-release-evidence).
 - Version `0.2.4` uses GPU presentation in handheld and docked modes, rebuilds it on dock changes, and uses the Switch program-active clock when available to avoid counting suspended time as game time. It also adds six log levels and a no-log option. The OLED test build returned to about 60 display submissions/sec after docking; see [the test notes](PLAN.MD#v024-release-evidence).
 - Version `0.2.3` adds GPU scaling for docked `x4`, RAM preloading for the opening movies and selected race assets, and three disc rotations when returning to the menu. Race smoothing and longer draw distances are optional; the default keeps the stock look.
 - Version `0.2.2` gives the original track loading screen three disc rotations before race setup, matching the boot hold from `0.2.1`.
